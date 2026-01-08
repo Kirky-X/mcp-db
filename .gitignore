@@ -132,8 +132,8 @@ temp/
 # -----------------------------------------------------------------------------
 # 12. Project Specific (Optional)
 # -----------------------------------------------------------------------------
-# AGENTS.md     # AI agent guidance (uncomment if needed)
-# CLAUDE.md     # Claude configuration (uncomment if needed)
+AGENTS.md     # AI agent guidance (uncomment if needed)
+CLAUDE.md     # Claude configuration (uncomment if needed)
 
 # -----------------------------------------------------------------------------
 # 13. Cache Directories
