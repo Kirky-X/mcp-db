@@ -4,6 +4,8 @@ import re
 from collections.abc import Callable
 from typing import Any
 
+from mcp_database.core.exceptions import QueryError
+
 
 class FilterParser:
     """过滤器解析器基类"""
@@ -20,13 +22,17 @@ class FilterParser:
         """
         if not filters:
             return None
-        return filters.copy()
+
+        filtered = {k: v for k, v in filters.items() if v is not None}
+        if not filtered:
+            return None
+        return filtered
 
 
 class SQLFilterTranslator:
     """SQL 过滤器转换器 - 使用参数化查询防止 SQL 注入"""
 
-    def translate(self, filters: dict[str, any]) -> tuple[str, dict[str, any]]:
+    def translate(self, filters: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         """
         将过滤器转换为 SQL WHERE 子句和参数字典
 
@@ -35,7 +41,13 @@ class SQLFilterTranslator:
 
         Returns:
             (WHERE 子句, 参数字典)
+
+        Raises:
+            QueryError: 过滤器包含无效值时抛出
         """
+        if not filters:
+            return "", {}
+
         conditions = []
         params = {}
 
@@ -53,14 +65,17 @@ class SQLFilterTranslator:
         where_clause = " AND ".join(conditions) if conditions else ""
         return where_clause, params
 
-    def _translate_equality(self, field: str, value: any) -> tuple[str, dict[str, any]]:
+    def _translate_equality(self, field: str, value: Any) -> tuple[str, dict[str, Any]]:
         """转换等值条件 - 使用参数化查询"""
+        if value is None:
+            msg = "Filter '{}' cannot have None value. Use '{}__isnull=True' for null queries."
+            raise QueryError(msg.format(field, field))
         param_name = f"{field}_eq"
         return f"{field} = :{param_name}", {param_name: value}
 
     def _translate_operator(
-        self, field: str, operator: str, value: any
-    ) -> tuple[str, dict[str, any]]:
+        self, field: str, operator: str, value: Any
+    ) -> tuple[str, dict[str, Any]]:
         """转换操作符 - 使用参数化查询"""
         param_name = f"{field}_{operator}"
 
@@ -74,6 +89,8 @@ class SQLFilterTranslator:
             "endswith": lambda: (f"{field} LIKE :{param_name}", {param_name: f"%{value}"}),
             "in": lambda: self._translate_in(field, value),
             "not_in": lambda: self._translate_not_in(field, value),
+            "isnull": lambda: self._translate_isnull(field, value),
+            "notnull": lambda: self._translate_notnull(field, value),
         }
 
         if operator in operator_map:
@@ -81,7 +98,7 @@ class SQLFilterTranslator:
 
         return self._translate_equality(field, value)
 
-    def _translate_in(self, field: str, values: list) -> tuple[str, dict[str, any]]:
+    def _translate_in(self, field: str, values: list[Any]) -> tuple[str, dict[str, Any]]:
         """转换 IN 操作符"""
         if not values:
             return "1=0", {}
@@ -95,7 +112,7 @@ class SQLFilterTranslator:
 
         return f"{field} IN ({', '.join(placeholders)})", params
 
-    def _translate_not_in(self, field: str, values: list) -> tuple[str, dict[str, any]]:
+    def _translate_not_in(self, field: str, values: list[Any]) -> tuple[str, dict[str, Any]]:
         """转换 NOT IN 操作符"""
         if not values:
             return "1=1", {}
@@ -108,6 +125,24 @@ class SQLFilterTranslator:
             params[param_name] = value
 
         return f"{field} NOT IN ({', '.join(placeholders)})", params
+
+    def _translate_isnull(self, field: str, value: Any) -> tuple[str, dict[str, Any]]:
+        """转换 IS NULL 操作符"""
+        if not isinstance(value, bool):
+            raise QueryError(f"Filter '{field}__isnull' must be true or false")
+        if value:
+            return f"{field} IS NULL", {}
+        else:
+            return f"{field} IS NOT NULL", {}
+
+    def _translate_notnull(self, field: str, value: Any) -> tuple[str, dict[str, Any]]:
+        """转换 NOT NULL 操作符（与 isnull 反向）"""
+        if not isinstance(value, bool):
+            raise QueryError(f"Filter '{field}__notnull' must be true or false")
+        if value:
+            return f"{field} IS NOT NULL", {}
+        else:
+            return f"{field} IS NULL", {}
 
 
 class MongoFilterTranslator:
@@ -146,6 +181,8 @@ class MongoFilterTranslator:
             "endswith": {"$regex": f"{re.escape(str(value))}$", "$options": "i"},
             "in": {"$in": value},
             "not_in": {"$nin": value},
+            "isnull": {"$exists": False} if value else {"$exists": True},
+            "notnull": {"$exists": True} if value else {"$exists": False},
         }
 
         return operator_map.get(operator, value)
@@ -201,5 +238,13 @@ class RedisFilterTranslator:
             return field_value in value
         elif operator == "not_in":
             return field_value not in value
+        elif operator == "isnull":
+            if not isinstance(value, bool):
+                return False
+            return field_value is None if value else field_value is not None
+        elif operator == "notnull":
+            if not isinstance(value, bool):
+                return False
+            return field_value is not None if value else field_value is None
 
         return field_value == value

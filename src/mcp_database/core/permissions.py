@@ -18,7 +18,7 @@ class PermissionManager:
         Args:
             config: 配置对象，如果为 None 则使用全局配置
         """
-        self._config = config or settings
+        self._config = config
 
     def check_permission(self, operation: str, dangerous: bool = False) -> bool:
         """
@@ -34,17 +34,33 @@ class PermissionManager:
         Raises:
             PermissionError: 权限不足时抛出
         """
-        # 检查基本操作权限
-        if not self._config.is_operation_allowed(operation):
+        config = self._config if self._config is not None else settings
+        if not config.is_operation_allowed(operation):
             raise PermissionError(f"Operation '{operation}' is not allowed")
 
-        # 检查危险操作权限
-        if dangerous and not self._config.is_dangerous_operation_allowed():
+        if dangerous and not config.is_dangerous_operation_allowed():
             raise PermissionError(
                 "Dangerous operations are not allowed. Set DANGEROUS_AGREE=true to enable."
             )
 
         return True
+
+    @classmethod
+    def get_instance(cls, config=None) -> "PermissionManager":
+        """
+        获取单例实例
+
+        Args:
+            config: 可选的配置对象，如果为 None 则使用全局配置
+
+        Returns:
+            PermissionManager 实例
+        """
+        if not hasattr(cls, "_instance") or cls._instance is None:
+            cls._instance = cls(config if config is not None else settings)
+        elif config is not None:
+            cls._instance = cls(config)
+        return cls._instance
 
 
 def require_permission(operation: str, dangerous: bool = False):
@@ -62,19 +78,14 @@ def require_permission(operation: str, dangerous: bool = False):
     def decorator(func: Callable) -> Callable:
         @wraps(func)
         async def async_wrapper(*args, **kwargs) -> Any:
-            # 检查权限
-            PermissionManager().check_permission(operation, dangerous)
-            # 执行函数
+            PermissionManager.get_instance().check_permission(operation, dangerous)
             return await func(*args, **kwargs)
 
         @wraps(func)
         def sync_wrapper(*args, **kwargs) -> Any:
-            # 检查权限
-            PermissionManager().check_permission(operation, dangerous)
-            # 执行函数
+            PermissionManager.get_instance().check_permission(operation, dangerous)
             return func(*args, **kwargs)
 
-        # 根据函数类型返回对应的包装器
         import asyncio
 
         if asyncio.iscoroutinefunction(func):
