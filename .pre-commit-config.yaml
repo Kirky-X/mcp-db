@@ -41,7 +41,7 @@ repos:
           - --no-error-summary
           - --ignore-missing-imports
 
-  # 3. Trailing whitespace fixer
+  # 3. Pre-commit hooks - Common checks
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
@@ -62,34 +62,8 @@ repos:
         description: Prevents large files from being committed.
         args: ['--maxkb=1000']
 
-  # 4. Shell script linting (if scripts exist)
-  - repo: https://github.com/shellcheck-py/shellcheck-precommit
-    rev: v0.10.0
-    hooks:
-      - id: shellcheck
-        name: Run ShellCheck
-        description: Lints shell scripts.
-
-  # 5. Python-specific checks
-  - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
-    hooks:
-      - id: python-check-blanket-noqa
-        name: Check Blanket noqa
-        description: Enforces specific noqa comments.
-      - id: python-sort-imports
-        name: Sort Python Imports
-        description: Sorts Python imports.
-        args: ['--virtual-env=.venv', '--combine-as', '--force-single-line']
-
 # Exclude patterns - files to skip
 exclude: '^(.git|__pycache__|\.pytest_cache|\.venv|venv|node_modules|\.tox|dist|build|\.eggs|.*\.egg-info|htmlcov|\.coverage|coverage\.xml|\.mypy_cache|\.ruff_cache)/'
 
-# Stages - run checks in specific order
-# default stages: [commit, push]
-
 # Fail fast - stop on first failure
 fail_fast: false
-
-# Print info messages
-verbose: true

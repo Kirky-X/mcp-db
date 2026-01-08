@@ -109,7 +109,7 @@ Usage examples:
 # Find records with null status
 await adapter.query("users", filters={"status__isnull": True})
 
-# Find records with non-null status  
+# Find records with non-null status
 await adapter.query("users", filters={"status__isnull": False})
 ```
 
