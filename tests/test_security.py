@@ -1,7 +1,6 @@
 """测试 SQL 安全检查器"""
 
 
-
 class TestSQLSecurityChecker:
     """测试 SQL 安全检查器"""
 

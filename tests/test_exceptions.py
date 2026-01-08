@@ -1,7 +1,6 @@
 """测试异常体系"""
 
 
-
 class TestDatabaseError:
     """测试 DatabaseError 基类"""
 

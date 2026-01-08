@@ -4,6 +4,8 @@ import os
 
 import pytest
 
+AUDIT_LOG_PATH = "logs/audit.log"
+
 
 class TestAuditLogger:
     """测试审计日志记录器"""
@@ -23,7 +25,7 @@ class TestAuditLogger:
         )
 
         # 验证日志文件存在
-        assert os.path.exists("audit.log")
+        assert os.path.exists(AUDIT_LOG_PATH)
 
     def test_log_operation_error(self):
         """测试记录错误操作"""
@@ -40,7 +42,7 @@ class TestAuditLogger:
         )
 
         # 验证日志文件存在
-        assert os.path.exists("audit.log")
+        assert os.path.exists(AUDIT_LOG_PATH)
 
     def test_log_execute(self):
         """测试记录 execute 操作"""
@@ -52,7 +54,7 @@ class TestAuditLogger:
         logger.log_execute(query="SELECT * FROM users", params={"limit": 10}, result={"rows": 10})
 
         # 验证日志文件存在
-        assert os.path.exists("audit.log")
+        assert os.path.exists(AUDIT_LOG_PATH)
 
     @pytest.mark.asyncio
     async def test_audit_log_decorator(self):
@@ -73,7 +75,7 @@ class TestAuditLogger:
 
         # 验证结果
         assert result["success"] is True
-        assert os.path.exists("audit.log")
+        assert os.path.exists(AUDIT_LOG_PATH)
 
     @pytest.mark.asyncio
     async def test_audit_log_decorator_with_error(self):
@@ -96,7 +98,7 @@ class TestAuditLogger:
             await adapter.delete("users", {"id": 1})
 
         # 验证日志文件存在
-        assert os.path.exists("audit.log")
+        assert os.path.exists(AUDIT_LOG_PATH)
 
     @pytest.mark.asyncio
     async def test_audit_execute_decorator(self):
@@ -117,7 +119,7 @@ class TestAuditLogger:
 
         # 验证结果
         assert result["success"] is True
-        assert os.path.exists("audit.log")
+        assert os.path.exists(AUDIT_LOG_PATH)
 
     def test_log_entry_format(self):
         """测试日志条目格式"""
@@ -131,7 +133,7 @@ class TestAuditLogger:
         )
 
         # 读取日志文件
-        with open("audit.log") as f:
+        with open(AUDIT_LOG_PATH) as f:
             log_content = f.read()
 
         # 验证日志格式
@@ -141,5 +143,9 @@ class TestAuditLogger:
     @classmethod
     def teardown_class(cls):
         """清理测试文件"""
-        if os.path.exists("audit.log"):
-            os.remove("audit.log")
+        if os.path.exists(AUDIT_LOG_PATH):
+            os.remove(AUDIT_LOG_PATH)
+        if os.path.exists("logs"):
+            import shutil
+
+            shutil.rmtree("logs", ignore_errors=True)

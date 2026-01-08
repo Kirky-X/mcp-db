@@ -1,7 +1,6 @@
 """测试过滤器 DSL 解析器"""
 
 
-
 class TestFilterParser:
     """测试 FilterParser 基类"""
 
@@ -32,9 +31,9 @@ class TestSQLFilterTranslator:
 
         translator = SQLFilterTranslator()
         filters = {"age": 25}
-        condition = translator.translate(filters)
-        assert "age" in condition
-        assert "25" in condition
+        where_clause, params = translator.translate(filters)
+        assert "age" in where_clause
+        assert params["age_eq"] == 25
 
     def test_gt_operator(self):
         """测试大于操作符"""
@@ -42,9 +41,9 @@ class TestSQLFilterTranslator:
 
         translator = SQLFilterTranslator()
         filters = {"age__gt": 18}
-        condition = translator.translate(filters)
-        assert ">" in condition
-        assert "18" in condition
+        where_clause, params = translator.translate(filters)
+        assert ">" in where_clause
+        assert params["age_gt"] == 18
 
     def test_lt_operator(self):
         """测试小于操作符"""
@@ -52,9 +51,9 @@ class TestSQLFilterTranslator:
 
         translator = SQLFilterTranslator()
         filters = {"age__lt": 60}
-        condition = translator.translate(filters)
-        assert "<" in condition
-        assert "60" in condition
+        where_clause, params = translator.translate(filters)
+        assert "<" in where_clause
+        assert params["age_lt"] == 60
 
     def test_gte_operator(self):
         """测试大于等于操作符"""
@@ -62,8 +61,9 @@ class TestSQLFilterTranslator:
 
         translator = SQLFilterTranslator()
         filters = {"age__gte": 18}
-        condition = translator.translate(filters)
-        assert ">=" in condition
+        where_clause, params = translator.translate(filters)
+        assert ">=" in where_clause
+        assert params["age_gte"] == 18
 
     def test_lte_operator(self):
         """测试小于等于操作符"""
@@ -71,8 +71,9 @@ class TestSQLFilterTranslator:
 
         translator = SQLFilterTranslator()
         filters = {"age__lte": 60}
-        condition = translator.translate(filters)
-        assert "<=" in condition
+        where_clause, params = translator.translate(filters)
+        assert "<=" in where_clause
+        assert params["age_lte"] == 60
 
     def test_contains_operator(self):
         """测试包含操作符"""
@@ -80,9 +81,9 @@ class TestSQLFilterTranslator:
 
         translator = SQLFilterTranslator()
         filters = {"name__contains": "John"}
-        condition = translator.translate(filters)
-        assert "LIKE" in condition
-        assert "%John%" in condition
+        where_clause, params = translator.translate(filters)
+        assert "LIKE" in where_clause
+        assert params["name_contains"] == "%John%"
 
     def test_startswith_operator(self):
         """测试开始于操作符"""
@@ -90,9 +91,9 @@ class TestSQLFilterTranslator:
 
         translator = SQLFilterTranslator()
         filters = {"name__startswith": "A"}
-        condition = translator.translate(filters)
-        assert "LIKE" in condition
-        assert "A%" in condition
+        where_clause, params = translator.translate(filters)
+        assert "LIKE" in where_clause
+        assert params["name_startswith"] == "A%"
 
     def test_endswith_operator(self):
         """测试结束于操作符"""
@@ -100,9 +101,9 @@ class TestSQLFilterTranslator:
 
         translator = SQLFilterTranslator()
         filters = {"name__endswith": "son"}
-        condition = translator.translate(filters)
-        assert "LIKE" in condition
-        assert "%son" in condition
+        where_clause, params = translator.translate(filters)
+        assert "LIKE" in where_clause
+        assert params["name_endswith"] == "%son"
 
     def test_in_operator(self):
         """测试 IN 操作符"""
@@ -110,8 +111,8 @@ class TestSQLFilterTranslator:
 
         translator = SQLFilterTranslator()
         filters = {"status__in": ["active", "pending"]}
-        condition = translator.translate(filters)
-        assert "IN" in condition
+        where_clause, params = translator.translate(filters)
+        assert "IN" in where_clause
 
     def test_not_in_operator(self):
         """测试 NOT IN 操作符"""
@@ -119,8 +120,8 @@ class TestSQLFilterTranslator:
 
         translator = SQLFilterTranslator()
         filters = {"status__not_in": ["deleted", "archived"]}
-        condition = translator.translate(filters)
-        assert "NOT IN" in condition
+        where_clause, params = translator.translate(filters)
+        assert "NOT IN" in where_clause
 
     def test_multiple_conditions(self):
         """测试多个条件"""
@@ -128,18 +129,21 @@ class TestSQLFilterTranslator:
 
         translator = SQLFilterTranslator()
         filters = {"age__gte": 18, "status": "active"}
-        condition = translator.translate(filters)
-        assert "age" in condition
-        assert "status" in condition
+        where_clause, params = translator.translate(filters)
+        assert "age" in where_clause
+        assert "status" in where_clause
+        assert "AND" in where_clause
 
     def test_string_value_quoting(self):
-        """测试字符串值引号处理"""
+        """测试字符串值参数化查询"""
         from mcp_database.core.filters import SQLFilterTranslator
 
         translator = SQLFilterTranslator()
         filters = {"name": "John Doe"}
-        condition = translator.translate(filters)
-        assert "'" in condition or '"' in condition
+        where_clause, params = translator.translate(filters)
+        assert "name" in where_clause
+        assert "name_eq" in params
+        assert params["name_eq"] == "John Doe"
 
 
 class TestMongoFilterTranslator:

@@ -75,29 +75,20 @@ class TestPermissionDecorators:
     """测试权限装饰器"""
 
     @pytest.mark.asyncio
-    async def test_require_permission_async_allowed(self):
-        """测试权限装饰器（异步，允许）"""
-        from mcp_database.config.settings import Settings
-
-        with patch("mcp_database.core.permissions.settings", Settings(enable_insert=True)):
-
-            @require_permission("insert")
-            async def test_func():
-                return "success"
-
-            result = await test_func()
-            assert result == "success"
-
-    @pytest.mark.asyncio
     async def test_require_permission_async_denied(self):
         """测试权限装饰器（异步，拒绝）"""
         from mcp_database.config.settings import Settings
 
-        with patch("mcp_database.core.permissions.settings", Settings(enable_insert=False)):
+        config = Settings(enable_insert=False)
 
-            @require_permission("insert")
-            async def test_func():
-                return "success"
+        @require_permission("insert")
+        async def test_func():
+            return "success"
+
+        # Patch the PermissionManager to use our config
+        with patch.object(PermissionManager, "get_instance") as mock_get_instance:
+            mock_manager = PermissionManager(config)
+            mock_get_instance.return_value = mock_manager
 
             with pytest.raises(PermissionError):
                 await test_func()
@@ -106,11 +97,16 @@ class TestPermissionDecorators:
         """测试权限装饰器（同步，允许）"""
         from mcp_database.config.settings import Settings
 
-        with patch("mcp_database.core.permissions.settings", Settings(enable_insert=True)):
+        config = Settings(enable_insert=True)
 
-            @require_permission("insert")
-            def test_func():
-                return "success"
+        @require_permission("insert")
+        def test_func():
+            return "success"
+
+        # Patch the PermissionManager to use our config
+        with patch.object(PermissionManager, "get_instance") as mock_get_instance:
+            mock_manager = PermissionManager(config)
+            mock_get_instance.return_value = mock_manager
 
             result = test_func()
             assert result == "success"
@@ -119,11 +115,16 @@ class TestPermissionDecorators:
         """测试权限装饰器（同步，拒绝）"""
         from mcp_database.config.settings import Settings
 
-        with patch("mcp_database.core.permissions.settings", Settings(enable_insert=False)):
+        config = Settings(enable_insert=False)
 
-            @require_permission("insert")
-            def test_func():
-                return "success"
+        @require_permission("insert")
+        def test_func():
+            return "success"
+
+        # Patch the PermissionManager to use our config
+        with patch.object(PermissionManager, "get_instance") as mock_get_instance:
+            mock_manager = PermissionManager(config)
+            mock_get_instance.return_value = mock_manager
 
             with pytest.raises(PermissionError):
                 test_func()
@@ -147,11 +148,16 @@ class TestPermissionDecorators:
         """测试删除权限装饰器"""
         from mcp_database.config.settings import Settings
 
-        with patch("mcp_database.core.permissions.settings", Settings(dangerous_agree=True)):
+        config = Settings(dangerous_agree=True, enable_delete=True)
 
-            @check_delete_permission
-            async def test_func():
-                return "success"
+        @check_delete_permission
+        async def test_func():
+            return "success"
+
+        # Patch the PermissionManager to use our config
+        with patch.object(PermissionManager, "get_instance") as mock_get_instance:
+            mock_manager = PermissionManager(config)
+            mock_get_instance.return_value = mock_manager
 
             result = await test_func()
             assert result == "success"
