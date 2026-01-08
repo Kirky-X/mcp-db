@@ -1,7 +1,6 @@
 """异常体系定义"""
 
 
-
 class DatabaseError(Exception):
     """数据库错误基类"""
 
