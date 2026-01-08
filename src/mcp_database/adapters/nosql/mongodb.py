@@ -115,9 +115,7 @@ class MongoDBAdapter(DatabaseAdapter):
             self._database = None
             self._connected = False
 
-    async def insert(
-        self, table: str, data: dict[str, any] | list[dict[str, any]]
-    ) -> InsertResult:
+    async def insert(self, table: str, data: dict[str, any] | list[dict[str, any]]) -> InsertResult:
         """
         插入文档
 
@@ -132,6 +130,10 @@ class MongoDBAdapter(DatabaseAdapter):
             QueryError: 查询错误时抛出
         """
         try:
+            # 验证数据不能为空
+            if isinstance(data, list) and len(data) == 0:
+                return InsertResult(inserted_count=0, inserted_ids=[])
+
             collection = self._get_collection(table)
 
             # 批量插入
@@ -181,16 +183,8 @@ class MongoDBAdapter(DatabaseAdapter):
             raise translated
 
     async def update(
-
-            self,
-
-            table: str,
-
-            data: dict[str, any],
-
-            filters: dict[str, any]
-
-        ) -> UpdateResult:
+        self, table: str, data: dict[str, any], filters: dict[str, any]
+    ) -> UpdateResult:
         """
         更新文档
 
@@ -221,16 +215,8 @@ class MongoDBAdapter(DatabaseAdapter):
             raise translated
 
     async def query(
-
-            self,
-
-            table: str,
-
-            filters: dict[str, any] | None = None,
-
-            limit: int | None = None
-
-        ) -> QueryResult:
+        self, table: str, filters: dict[str, any] | None = None, limit: int | None = None
+    ) -> QueryResult:
         """
         查询文档
 

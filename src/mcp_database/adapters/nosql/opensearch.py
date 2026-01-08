@@ -100,18 +100,43 @@ class OpenSearchAdapter(DatabaseAdapter):
             QueryError: 插入错误时抛出
         """
         try:
-            # 批量插入
             if isinstance(data, list):
-                inserted_ids = []
+                if len(data) == 0:
+                    return InsertResult(inserted_count=0, inserted_ids=[])
+
+                if len(data) == 1:
+                    response = await self._client.index(index=table, body=data[0])
+                    doc_id = response.get("_id")
+                    return InsertResult(inserted_count=1, inserted_ids=[doc_id], success=True)
+
+                operations = []
                 for doc in data:
-                    response = await self._client.index(index=table, body=doc)
-                    inserted_ids.append(response.get("_id"))
+                    operations.append({"index": {"_index": table}})
+                    operations.append(doc)
+
+                response = await self._client.bulk(body=operations)
+
+                # 处理部分成功的情况
+                successful_ids = []
+                failed_items = []
+
+                for item in response.get("items", []):
+                    index_result = item.get("index", {})
+                    if index_result.get("error"):
+                        failed_items.append(index_result)
+                    else:
+                        successful_ids.append(index_result.get("_id"))
+
+                if len(failed_items) == len(data):
+                    # 所有文档都失败
+                    raise QueryError(f"All documents failed to insert: {failed_items}")
 
                 return InsertResult(
-                    inserted_count=len(inserted_ids), inserted_ids=inserted_ids, success=True
+                    inserted_count=len(successful_ids),
+                    inserted_ids=successful_ids,
+                    success=len(failed_items) == 0,
                 )
 
-            # 单个插入
             else:
                 response = await self._client.index(index=table, body=data)
                 doc_id = response.get("_id")

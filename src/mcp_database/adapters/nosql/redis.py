@@ -47,6 +47,25 @@ class RedisAdapter(DatabaseAdapter):
         """获取表的索引键名"""
         return f"{table}:_index"
 
+    @staticmethod
+    def _serialize_data(data: dict[str, Any]) -> str:
+        """
+        序列化数据为 JSON，处理不可序列化对象
+
+        Args:
+            data: 要序列化的数据字典
+
+        Returns:
+            JSON 字符串
+
+        Raises:
+            QueryError: 数据无法序列化时抛出
+        """
+        try:
+            return json.dumps(data, default=str)
+        except (TypeError, ValueError) as e:
+            raise QueryError(f"Data contains non-serializable objects: {e}")
+
     def __init__(self, config: DatabaseConfig):
         """
         初始化 Redis 适配器
@@ -112,9 +131,7 @@ class RedisAdapter(DatabaseAdapter):
             self._client = None
             self._connected = False
 
-    async def insert(
-        self, table: str, data: dict[str, Any] | list[dict[str, Any]]
-    ) -> InsertResult:
+    async def insert(self, table: str, data: dict[str, Any] | list[dict[str, Any]]) -> InsertResult:
         """
         插入记录
 
@@ -129,6 +146,10 @@ class RedisAdapter(DatabaseAdapter):
             QueryError: 查询错误时抛出
         """
         try:
+            # 验证数据不能为空
+            if isinstance(data, list) and len(data) == 0:
+                return InsertResult(inserted_count=0, inserted_ids=[])
+
             # 批量插入
             if isinstance(data, list):
                 inserted_ids = []
@@ -141,7 +162,7 @@ class RedisAdapter(DatabaseAdapter):
                     key = self._make_key(table, record_id)
                     record_with_id = record.copy()
                     record_with_id["id"] = record_id
-                    await self._client.set(key, json.dumps(record_with_id))
+                    await self._client.set(key, self._serialize_data(record_with_id))
 
                     # 添加到索引
                     await self._client.sadd(self._is_index_key(table), key)
@@ -156,7 +177,7 @@ class RedisAdapter(DatabaseAdapter):
                 key = self._make_key(table, record_id)
                 record_with_id = data.copy()
                 record_with_id["id"] = record_id
-                await self._client.set(key, json.dumps(record_with_id))
+                await self._client.set(key, self._serialize_data(record_with_id))
 
                 # 添加到索引
                 await self._client.sadd(self._is_index_key(table), key)
@@ -248,7 +269,7 @@ class RedisAdapter(DatabaseAdapter):
                     if filter_func(record):
                         # 更新数据
                         record.update(data)
-                        await self._client.set(key, json.dumps(record))
+                        await self._client.set(key, self._serialize_data(record))
                         updated_count += 1
 
             return UpdateResult(updated_count=updated_count)
