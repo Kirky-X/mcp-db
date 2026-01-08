@@ -7,320 +7,223 @@ MCP Database SDK 是一个专为 MCP（Model Context Protocol）协议设计的�
 ### 设计目标
 
 1. **工具化接口** - 所有操作通过 MCP Tool 暴露，大模型可直接调用
-2. **上下文感知** - 工具描述包含完整的参数说明和返回格式
-3. **安全优先** - 严格的安全检查防止误操作
-4. **多数据库兼容** - 支持关系型、文档型、键值型等多种数据库
+2. **统一工具** - 只有 6 个工具（insert/query/update/delete/advanced/execute）
+3. **数据库透明** - 通过 DATABASE_URL 自动识别数据库类型
+4. **安全优先** - 严格的安全检查防止误操作
 
 ---
 
-## 二、MCP 工具接口定义
+## 二、系统架构
 
-### 2.1 工具命名规范
-
-所有工具遵循统一的命名规范：`db_<操作>_<数据库类型>`
-
-| 工具类型 | 命名模式 | 示例 |
-|---------|---------|------|
-| 插入工具 | `db_insert_<db>` | `db_insert_postgresql` |
-| 查询工具 | `db_query_<db>` | `db_query_mongodb` |
-| 更新工具 | `db_update_<db>` | `db_update_redis` |
-| 删除工具 | `db_delete_<db>` | `db_delete_mysql` |
-| 高级工具 | `db_advanced_<db>` | `db_advanced_mongodb` |
-
-### 2.2 通用工具描述模板
-
-```json
-{
-  "name": "db_query_<db>",
-  "description": "从<数据库名>查询数据，支持灵活的过滤条件。返回匹配的所有记录及其总数。适用于数据检索、统计等场景。",
-  "parameters": {
-    "type": "object",
-    "properties": {
-      "table": {
-        "type": "string",
-        "description": "表/集合/键前缀名称，如 'users'、'products'"
-      },
-      "filters": {
-        "type": "object",
-        "description": "过滤条件，支持的操作符：eq(等于)、gt(大于)、lt(小于)、contains(包含)、in(列表)、isnull(空值)。示例：{\"status\": \"active\", \"age__gte\": 18}"
-      },
-      "limit": {
-        "type": "integer",
-        "description": "返回记录数量限制，默认100，最大10000"
-      }
-    },
-    "required": ["table"]
-  },
-  "returns": {
-    "type": "object",
-    "properties": {
-      "success": {"type": "boolean", "description": "操作是否成功"},
-      "data": {"type": "array", "description": "查询结果数据列表"},
-      "count": {"type": "integer", "description": "匹配的记录总数"},
-      "has_more": {"type": "boolean", "description": "是否还有更多数据"}
-    }
-  }
-}
+```
+┌─────────────────────────────────────────────────────────────┐
+│                      MCP Client (LLM)                        │
+└──────────────────────────┬──────────────────────────────────┘
+                           │ MCP Tool Call
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│                    MCP Database Server                       │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │                    6 Tools                           │    │
+│  │  insert  query  update  delete  advanced  execute   │    │
+│  └─────────────────────────────────────────────────────┘    │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+                           ▼
+┌─────────────────────────────────────────────────────────────┐
+│                   Adapter Factory                           │
+│         根据 DATABASE_URL 自动选择适配器                      │
+└──────────────────────────┬──────────────────────────────────┘
+                           │
+         ┌─────────────────┼─────────────────┐
+         │                 │                 │
+         ▼                 ▼                 ▼
+┌──────────────┐  ┌──────────────┐  ┌──────────────┐
+│ SQL Adapters │  │ NoSQL Adapters│ │ HTTP Adapters│
+│ PostgreSQL   │  │ MongoDB      │  │ Supabase     │
+│ MySQL        │  │ Redis        │  └──────────────┘
+│ SQLite       │  │ OpenSearch   │
+└──────────────┘  └──────────────┘
 ```
 
 ---
 
-## 三、工具详细定义
+## 三、核心组件
 
-### 3.1 插入工具 (db_insert)
+### 3.1 MCP Server
 
-**适用场景**：向数据库添加新记录
+使用 FastMCP 框架，提供 6 个统一工具：
 
-**参数说明**：
-| 参数 | 类型 | 必填 | 描述 |
-|-----|------|-----|------|
-| table | string | 是 | 表/集合/键前缀名称 |
-| data | object/array | 是 | 要插入的数据，支持单条或批量 |
+| 工具 | 参数 | 返回 |
+|-----|------|------|
+| insert | table, data | success, inserted_count, inserted_ids |
+| query | table, filters, limit | success, data, count, has_more |
+| update | table, data, filters | success, updated_count |
+| delete | table, filters | success, deleted_count |
+| advanced | table, operation, params | success, operation, data |
+| execute | query, params | success, rows_affected, data |
 
-**返回说明**：
-| 字段 | 类型 | 描述 |
-|-----|------|-----|
-| success | boolean | 插入是否成功 |
-| inserted_count | integer | 插入的记录数量 |
-| inserted_ids | array | 插入记录的ID列表 |
+### 3.2 Adapter Factory
 
-**调用示例**：
+根据 DATABASE_URL 自动选择适配器：
+
+```python
+# PostgreSQL
+postgresql://user:pass@host:port/db -> SQLAdapter
+
+# MySQL
+mysql://user:pass@host:port/db -> SQLAdapter
+
+# MongoDB
+mongodb://user:pass@host:port/db -> MongoDBAdapter
+
+# Redis
+redis://host:port -> RedisAdapter
+
+# OpenSearch
+http://host:9200 -> OpenSearchAdapter
+
+# Supabase
+https://project.supabase.co -> SupabaseAdapter
 ```
-工具: db_insert_postgresql
-参数: {
-  "table": "users",
-  "data": {
-    "name": "张三",
-    "email": "zhangsan@example.com",
-    "status": "active"
-  }
-}
+
+### 3.3 数据库适配器
+
+所有适配器继承自 DatabaseAdapter 抽象基类，实现统一接口：
+
+```python
+class DatabaseAdapter(ABC):
+    @property
+    @abstractmethod
+    def is_connected(self) -> bool: ...
+
+    @abstractmethod
+    async def connect(self) -> None: ...
+
+    @abstractmethod
+    async def disconnect(self) -> None: ...
+
+    @abstractmethod
+    async def insert(self, table: str, data: dict) -> InsertResult: ...
+
+    @abstractmethod
+    async def query(self, table: str, filters: dict, limit: int) -> QueryResult: ...
+
+    @abstractmethod
+    async def update(self, table: str, data: dict, filters: dict) -> UpdateResult: ...
+
+    @abstractmethod
+    async def delete(self, table: str, filters: dict) -> DeleteResult: ...
+
+    @abstractmethod
+    async def execute(self, query: str, params: dict) -> ExecuteResult: ...
+
+    @abstractmethod
+    async def advanced_query(self, operation: str, params: dict) -> AdvancedResult: ...
 ```
-
-### 3.2 查询工具 (db_query)
-
-**适用场景**：检索数据库中的数据
-
-**参数说明**：
-| 参数 | 类型 | 必填 | 描述 |
-|-----|------|-----|------|
-| table | string | 是 | 表/集合/键前缀名称 |
-| filters | object | 否 | 过滤条件，支持多种操作符 |
-| limit | integer | 否 | 返回数量限制，默认100 |
-
-**支持的过滤器操作符**：
-| 操作符 | 描述 | 示例 |
-|-------|-----|------|
-| `__eq` | 等于（默认） | `{"status": "active"}` |
-| `__gt` | 大于 | `{"age__gt": 18}` |
-| `__gte` | 大于等于 | `{"score__gte": 60}` |
-| `__lt` | 小于 | `{"price__lt": 100}` |
-| `__lte` | 小于等于 | `{"stock__lte": 0}` |
-| `__contains` | 包含子串 | `{"name__contains": "张"}` |
-| `__startswith` | 前缀匹配 | `{"email__startswith": "admin"}` |
-| `__endswith` | 后缀匹配 | `{"file__endswith": ".pdf"}` |
-| `__in` | 在列表中 | `{"status__in": ["a", "b"]}` |
-| `__not_in` | 不在列表中 | `{"role__not_in": ["admin"]}` |
-| `__isnull` | 是否为空 | `{"deleted_at__isnull": true}` |
-
-**返回说明**：
-| 字段 | 类型 | 描述 |
-|-----|------|-----|
-| success | boolean | 查询是否成功 |
-| data | array | 查询结果数据 |
-| count | integer | 匹配的记录总数 |
-| has_more | boolean | 是否还有更多数据 |
-
-### 3.3 更新工具 (db_update)
-
-**适用场景**：修改数据库中已存在的记录
-
-**参数说明**：
-| 参数 | 类型 | 必填 | 描述 |
-|-----|------|-----|------|
-| table | string | 是 | 表/集合/键前缀名称 |
-| data | object | 是 | 要更新的字段和值 |
-| filters | object | 是 | 更新条件，限定更新范围 |
-
-**返回说明**：
-| 字段 | 类型 | 描述 |
-|-----|------|-----|
-| success | boolean | 更新是否成功 |
-| updated_count | integer | 更新的记录数量 |
-
-### 3.4 删除工具 (db_delete)
-
-**适用场景**：从数据库删除记录
-
-**参数说明**：
-| 参数 | 类型 | 必填 | 描述 |
-|-----|------|-----|------|
-| table | string | 是 | 表/集合/键前缀名称 |
-| filters | object | 是 | 删除条件，限定删除范围 |
-
-**返回说明**：
-| 字段 | 类型 | 描述 |
-|-----|------|-----|
-| success | boolean | 删除是否成功 |
-| deleted_count | integer | 删除的记录数量 |
-
-### 3.5 高级工具 (db_advanced)
-
-**适用场景**：执行复杂操作如聚合查询、事务等
-
-**参数说明**：
-| 参数 | 类型 | 必填 | 描述 |
-|-----|------|-----|------|
-| table | string | 是 | 表/集合名称 |
-| operation | string | 是 | 操作类型：aggregate/transaction |
-| params | object | 是 | 操作参数 |
-
-**支持的操作类型**：
-- `aggregate`：聚合查询，支持分组、统计、管道操作
-- `transaction`：事务操作，支持多步骤原子执行
 
 ---
 
-## 四、数据库能力矩阵
-
-### 4.1 支持的数据库及特性
-
-| 数据库 | 类型 | 插入 | 查询 | 更新 | 删除 | 聚合 | 事务 |
-|--------|------|:---:|:---:|:---:|:---:|:---:|:---:|
-| PostgreSQL | 关系型 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| MySQL | 关系型 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| SQLite | 关系型 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| MongoDB | 文档型 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Redis | 键值型 | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
-| OpenSearch | 搜索型 | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
-| Supabase | REST | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-
-### 4.2 工具与数据库映射
-
-| 数据库 | 插入工具 | 查询工具 | 更新工具 | 删除工具 | 高级工具 |
-|--------|:-------:|:-------:|:-------:|:-------:|:-------:|
-| PostgreSQL | db_insert_postgresql | db_query_postgresql | db_update_postgresql | db_delete_postgresql | db_advanced_postgresql |
-| MySQL | db_insert_mysql | db_query_mysql | db_update_mysql | db_delete_mysql | db_advanced_mysql |
-| SQLite | db_insert_sqlite | db_query_sqlite | db_update_sqlite | db_delete_sqlite | db_advanced_sqlite |
-| MongoDB | db_insert_mongodb | db_query_mongodb | db_update_mongodb | db_delete_mongodb | db_advanced_mongodb |
-| Redis | db_insert_redis | db_query_redis | db_update_redis | db_delete_redis | - |
-| OpenSearch | db_insert_opensearch | db_query_opensearch | db_update_opensearch | db_delete_opensearch | db_advanced_opensearch |
-| Supabase | db_insert_supabase | db_query_supabase | db_update_supabase | db_delete_supabase | db_advanced_supabase |
-
----
-
-## 五、使用流程
-
-### 5.1 工具发现
-
-MCP 客户端启动时，服务器会返回所有可用工具列表：
-
-```json
-{
-  "tools": [
-    {
-      "name": "db_query_postgresql",
-      "description": "从PostgreSQL查询数据...",
-      "inputSchema": {...}
-    },
-    {
-      "name": "db_insert_mongodb",
-      "description": "向MongoDB插入文档...",
-      "inputSchema": {...}
-    }
-  ]
-}
-```
-
-### 5.2 工具调用流程
+## 四、数据流
 
 ```
-1. 大模型分析用户意图
+1. LLM 调用工具
    ↓
-2. 选择合适的工具（如需要查询用户：db_query_postgresql）
+2. MCP Server 接收请求
    ↓
-3. 构建参数（table="users", filters={"status": "active"}）
+3. 调用适配器方法
    ↓
-4. 调用工具
+4. 适配器执行数据库操作
    ↓
-5. 返回结果给大模型
-   ↓
-6. 大模型处理结果并响应用户
+5. 返回结果给 LLM
 ```
 
-### 5.3 错误处理
+### 查询流程示例
 
-工具调用失败时返回标准错误格式：
-
-```json
-{
-  "success": false,
-  "error": {
-    "type": "connection_error|query_error|permission_error",
-    "message": "错误描述信息"
-  }
-}
+```
+工具: query
+参数: {"table": "users", "filters": {"status": "active"}, "limit": 10}
+     ↓
+MCP Server 解析参数
+     ↓
+调用 adapter.query("users", {"status": "active"}, 10)
+     ↓
+SQLAdapter 执行：
+  1. 翻译过滤器为 WHERE 条件
+  2. 安全检查（SQL 注入检测）
+  3. 执行查询
+  4. 返回结果
+     ↓
+返回: {"success": true, "data": [...], "count": 100, "has_more": true}
 ```
 
 ---
 
-## 六、安全机制
+## 五、数据库能力矩阵
 
-### 6.1 操作权限控制
-
-| 操作 | 默认状态 | 环境变量控制 |
-|-----|---------|-------------|
-| 插入 | 启用 | ENABLE_INSERT |
-| 查询 | 启用 | - |
-| 更新 | 启用 | ENABLE_UPDATE |
-| 删除 | 禁用 | ENABLE_DELETE |
-| 执行 | 禁用 | DANGEROUS_AGREE |
-
-### 6.2 SQL 安全检测
-
-自动检测危险操作：
-- 禁止： DROP、TRUNCATE、ALTER、GRANT
-- 必需 WHERE：DELETE、UPDATE（无 WHERE 拒绝执行）
-- 注入检测：识别 SQL 注入模式
-
-### 6.3 查询限制
-
-- 单次查询最大返回：10,000 条记录
-- 查询超时：30 秒（可配置）
-- 连接超时：10 秒（可配置）
+| 数据库 | 插入 | 查询 | 更新 | 删除 | 聚合 | 事务 |
+|-------|:---:|:---:|:---:|:---:|:---:|:---:|
+| PostgreSQL | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| MySQL | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| SQLite | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| MongoDB | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Redis | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
+| OpenSearch | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Supabase | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 
 ---
 
-## 七、连接配置
+## 六、安全架构
 
-### 7.1 数据库 URL 格式
+### 6.1 SQL 注入防护
 
-| 数据库 | URL 格式 |
-|-------|---------|
-| PostgreSQL | `postgresql://user:pass@host:port/db` |
-| MySQL | `mysql://user:pass@host:port/db` |
-| SQLite | `sqlite:///path/to/file.db` |
-| MongoDB | `mongodb://user:pass@host:port/db` |
-| Redis | `redis://host:port` |
-| OpenSearch | `http://host:9200` |
-| Supabase | `https://project.supabase.co` |
+- 所有查询使用参数化查询
+- 自动转义用户输入
 
-### 7.2 环境变量配置
+### 6.2 危险语句检测
 
-```bash
-# 数据库连接
-DATABASE_URL=postgresql://user:pass@localhost:5432/db
+自动检测并拦截：
 
-# 操作开关
-ENABLE_INSERT=true
-ENABLE_DELETE=true
-ENABLE_UPDATE=true
-DANGEROUS_AGREE=false
+| 禁止语句 | 说明 |
+|---------|------|
+| DROP | 删除表/数据库 |
+| TRUNCATE | 清空表 |
+| ALTER | 修改表结构 |
+| GRANT | 权限修改 |
 
-# 超时配置
-CONNECT_TIMEOUT=10
-QUERY_TIMEOUT=30
-```
+### 6.3 权限控制
+
+通过环境变量控制操作权限：
+
+| 操作 | 默认状态 | 环境变量 |
+|-----|---------|---------|
+| INSERT | 启用 | - |
+| SELECT | 启用 | - |
+| UPDATE | 启用 | - |
+| DELETE | 禁用 | ENABLE_DELETE=true |
+| EXECUTE | 禁用 | DANGEROUS_AGREE=true |
+
+### 6.4 安全更新/删除
+
+UPDATE 和 DELETE 操作必须包含 WHERE 条件，否则拒绝执行。
+
+---
+
+## 七、技术栈
+
+| 类别 | 技术 | 版本 | 用途 |
+|-----|------|------|------|
+| 语言 | Python | 3.10+ | 核心开发 |
+| MCP | mcp | 0.9+ | MCP 协议 |
+| 数据验证 | Pydantic | 2.5+ | 模型定义 |
+| ORM | SQLAlchemy | 2.0+ | SQL 适配 |
+| 异步 PostgreSQL | asyncpg | 0.29+ | 连接池 |
+| 异步 MySQL | aiomysql | 0.2+ | 连接池 |
+| 异步 SQLite | aiosqlite | 0.19+ | 连接池 |
+| MongoDB | Motor | 3.3+ | 异步驱动 |
+| Redis | redis | 5.0+ | 客户端 |
+| OpenSearch | opensearch-py | 2.4+ | 客户端 |
+| HTTP | httpx | 0.25+ | HTTP 客户端 |
 
 ---
 
