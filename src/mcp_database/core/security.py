@@ -41,7 +41,7 @@ class SQLSecurityChecker:
         r"AND\s+1\s*=\s*1",  # AND 注入
     ]
 
-    def __init__(self):
+    def __init__(self) -> None:
         """初始化安全检查器"""
         self._injection_regex = [
             re.compile(pattern, re.IGNORECASE) for pattern in self.INJECTION_PATTERNS
@@ -159,9 +159,7 @@ class SQLSecurityChecker:
 
         return SecurityCheckResult(is_safe=True)
 
-    def _check_parameters(
-        self, query: str, params: dict[str, Any] | None
-    ) -> SecurityCheckResult:
+    def _check_parameters(self, query: str, params: dict[str, Any] | None) -> SecurityCheckResult:
         """
         检查参数化查询
 
