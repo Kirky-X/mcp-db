@@ -152,128 +152,81 @@ class SQLAdapter(DatabaseAdapter):
 
         return self._session_factory()
 
-    async def insert(
-        self, table: str, data: dict[str, Any] | list[dict[str, Any]]
-    ) -> InsertResult:
+    def _build_insert_sql(self, table: str, columns: list[str], use_returning: bool = True) -> str:
         """
-
-        插入数据
-
-
+        构建 INSERT SQL 语句
 
         Args:
-
             table: 表名
-
-            data: 要插入的数据字典或列表
-
-
+            columns: 列名列表
+            use_returning: 是否使用 RETURNING 子句
 
         Returns:
+            SQL 语句
+        """
+        placeholders = ", ".join([f":{col}" for col in columns])
+        columns_str = ", ".join(columns)
+        sql = f"INSERT INTO {table} ({columns_str}) VALUES ({placeholders})"
+        if use_returning and self._database_type == "postgresql":
+            sql += " RETURNING id"
+        return sql
 
+    def _extract_inserted_id(self, result, use_returning: bool = True) -> int | None:
+        """
+        从执行结果中提取插入的 ID
+
+        Args:
+            result: 执行结果
+            use_returning: 是否使用 RETURNING 子句
+
+        Returns:
+            插入的 ID
+        """
+        if use_returning and self._database_type == "postgresql":
+            return result.scalar()
+        return result.lastrowid
+
+    async def insert(self, table: str, data: dict[str, Any] | list[dict[str, Any]]) -> InsertResult:
+        """
+        插入数据
+
+        Args:
+            table: 表名
+            data: 要插入的数据字典或列表
+
+        Returns:
             InsertResult: 插入结果
 
-
-
         Raises:
-
             QueryError: 查询错误时抛出
-
         """
-
         try:
-            # 验证表名
-
             table = self._validate_table_name(table)
 
+            if isinstance(data, list) and len(data) == 0:
+                return InsertResult(inserted_count=0, inserted_ids=[])
+
+            data_list = data if isinstance(data, list) else [data]
+            use_returning = self._database_type == "postgresql"
+
             async with self._get_session() as session:
-                # 批量插入
+                columns = list(data_list[0].keys())
+                sql = self._build_insert_sql(table, columns, use_returning)
+                stmt = text(sql)
 
-                if isinstance(data, list):
-                    columns = list(data[0].keys())
-
-                    placeholders = ", ".join([f":{col}" for col in columns])
-
-                    columns_str = ", ".join(columns)
-
-                    if self._database_type == "postgresql":
-                        # PostgreSQL 使用 RETURNING 获取 ID
-                        sql = (
-                            f"INSERT INTO {table} ({columns_str}) "
-                            f"VALUES ({placeholders}) RETURNING id"
-                        )
-
-                        stmt = text(sql)
-
-                        inserted_ids = []
-
-                        for row in data:
-                            result = await session.execute(stmt, row)
-
-                            inserted_id = result.scalar()
-
-                            inserted_ids.append(inserted_id)
-
-                    else:
-                        # MySQL 和 SQLite 使用 lastrowid
-
-                        sql = f"INSERT INTO {table} ({columns_str}) VALUES ({placeholders})"
-
-                        stmt = text(sql)
-
-                        inserted_ids = []
-
-                        for row in data:
-                            result = await session.execute(stmt, row)
-
-                            inserted_ids.append(result.lastrowid)
-
-                    inserted_count = len(data)
-
-                else:
-                    # 单条插入
-
-                    columns = list(data.keys())
-
-                    placeholders = ", ".join([f":{col}" for col in columns])
-
-                    columns_str = ", ".join(columns)
-
-                    if self._database_type == "postgresql":
-                        # PostgreSQL 使用 RETURNING 获取 ID
-                        sql = (
-                            f"INSERT INTO {table} ({columns_str}) "
-                            f"VALUES ({placeholders}) RETURNING id"
-                        )
-
-                        stmt = text(sql)
-
-                        result = await session.execute(stmt, data)
-
-                        inserted_id = result.scalar()
-
-                        inserted_ids = [inserted_id] if inserted_id else []
-
-                    else:
-                        # MySQL 和 SQLite 使用 lastrowid
-
-                        sql = f"INSERT INTO {table} ({columns_str}) VALUES ({placeholders})"
-
-                        stmt = text(sql)
-
-                        result = await session.execute(stmt, data)
-
-                        inserted_ids = [result.lastrowid] if result.lastrowid else []
-
-                    inserted_count = 1
+                inserted_ids = []
+                for row in data_list:
+                    result = await session.execute(stmt, row)
+                    inserted_id = self._extract_inserted_id(result, use_returning)
+                    if inserted_id:
+                        inserted_ids.append(inserted_id)
 
                 await session.commit()
 
-                return InsertResult(inserted_count=inserted_count, inserted_ids=inserted_ids)
+                return InsertResult(inserted_count=len(data_list), inserted_ids=inserted_ids)
 
         except Exception as e:
             translated = ExceptionTranslator.translate(e, self._database_type)
-
             raise translated
 
     async def delete(self, table: str, filters: dict[str, Any]) -> DeleteResult:
@@ -396,7 +349,7 @@ class SQLAdapter(DatabaseAdapter):
                     count_sql += f" WHERE {where_clause}"
 
                 count_result = await session.execute(text(count_sql), params)
-                total_count = count_result.scalar()
+                total_count = count_result.scalar() or 0
 
                 # 检查结果大小限制
                 max_results = self.config.max_query_results
@@ -407,7 +360,11 @@ class SQLAdapter(DatabaseAdapter):
                     )
 
                 # 查询数据
-                if limit:
+                if limit is not None:
+                    if not isinstance(limit, int) or limit < 0:
+                        raise QueryError(
+                            f"Invalid limit value: {limit}. Must be a positive integer."
+                        )
                     sql += f" LIMIT {limit}"
 
                 result = await session.execute(text(sql), params)
