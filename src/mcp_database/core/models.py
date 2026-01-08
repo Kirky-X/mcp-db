@@ -33,6 +33,7 @@ class QueryResult(BaseModel):
     data: list[dict[str, Any]] = Field(default_factory=list, description="查询结果数据")
     count: int = Field(..., ge=0, description="匹配的记录总数")
     has_more: bool = Field(default=False, description="是否还有更多数据")
+    success: bool = Field(default=True, description="操作是否成功")
 
 
 class ExecuteResult(BaseModel):

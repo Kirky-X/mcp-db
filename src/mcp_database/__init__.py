@@ -20,6 +20,7 @@ from mcp_database.core import (
     TimeoutError,
     UpdateResult,
 )
+from mcp_database.server import create_server, mcp
 
 __all__ = [
     "__version__",
@@ -39,4 +40,6 @@ __all__ = [
     "IntegrityError",
     "TimeoutError",
     "AdapterFactory",
+    "create_server",
+    "mcp",
 ]

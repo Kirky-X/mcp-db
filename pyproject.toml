@@ -30,6 +30,9 @@ dev = [
     "types-redis>=4.6.0",
 ]
 
+[project.scripts]
+mcp-database = "mcp_database.server.cli:main"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
