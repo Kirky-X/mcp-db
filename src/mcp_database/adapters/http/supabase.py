@@ -3,6 +3,7 @@
 import os
 
 import httpx
+from httpx import ConnectError, HTTPStatusError, TimeoutException
 
 from mcp_database.core.adapter import DatabaseAdapter
 from mcp_database.core.exceptions import (
@@ -101,6 +102,7 @@ class SupabaseAdapter(DatabaseAdapter):
 
         Raises:
             QueryError: 插入错误时抛出
+            ConnectionError: 连接错误时抛出
         """
         try:
             # 批量插入
@@ -128,6 +130,14 @@ class SupabaseAdapter(DatabaseAdapter):
                     inserted_count=1, inserted_ids=[doc_id] if doc_id else [], success=True
                 )
 
+        except TimeoutException as e:
+            raise ConnectionError(f"Supabase request timed out: {e}")
+        except ConnectError as e:
+            raise ConnectionError(f"Failed to connect to Supabase: {e}")
+        except HTTPStatusError as e:
+            raise QueryError(
+                f"Supabase request failed with status {e.response.status_code}: {e.response.text}"
+            )
         except Exception as e:
             translated = ExceptionTranslator.translate(e, "supabase")
             raise translated
@@ -166,6 +176,14 @@ class SupabaseAdapter(DatabaseAdapter):
 
             return DeleteResult(deleted_count=deleted_count)
 
+        except TimeoutException as e:
+            raise ConnectionError(f"Supabase request timed out: {e}")
+        except ConnectError as e:
+            raise ConnectionError(f"Failed to connect to Supabase: {e}")
+        except HTTPStatusError as e:
+            raise QueryError(
+                f"Supabase request failed with status {e.response.status_code}: {e.response.text}"
+            )
         except Exception as e:
             translated = ExceptionTranslator.translate(e, "supabase")
             raise translated
@@ -207,6 +225,14 @@ class SupabaseAdapter(DatabaseAdapter):
 
             return UpdateResult(updated_count=updated_count)
 
+        except TimeoutException as e:
+            raise ConnectionError(f"Supabase request timed out: {e}")
+        except ConnectError as e:
+            raise ConnectionError(f"Failed to connect to Supabase: {e}")
+        except HTTPStatusError as e:
+            raise QueryError(
+                f"Supabase request failed with status {e.response.status_code}: {e.response.text}"
+            )
         except Exception as e:
             translated = ExceptionTranslator.translate(e, "supabase")
             raise translated
@@ -275,6 +301,14 @@ class SupabaseAdapter(DatabaseAdapter):
 
             return QueryResult(data=data, count=len(data), has_more=False)
 
+        except TimeoutException as e:
+            raise ConnectionError(f"Supabase request timed out: {e}")
+        except ConnectError as e:
+            raise ConnectionError(f"Failed to connect to Supabase: {e}")
+        except HTTPStatusError as e:
+            raise QueryError(
+                f"Supabase request failed with status {e.response.status_code}: {e.response.text}"
+            )
         except Exception as e:
             translated = ExceptionTranslator.translate(e, "supabase")
             raise translated
