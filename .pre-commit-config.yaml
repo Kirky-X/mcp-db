@@ -1,0 +1,95 @@
+# Pre-commit Configuration for MCP Database SDK
+#
+# Installation:
+#   pip install pre-commit
+#   pre-commit install
+#
+# Manual run:
+#   pre-commit run --all-files
+#   pre-commit run --files <files>
+#
+# Skip checks:
+#   git commit --no-verify
+
+repos:
+  # 1. Ruff - Code formatting and linting
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.2
+    hooks:
+      - id: ruff
+        name: Run Ruff (Linting)
+        description: Run Ruff linter for Python code quality.
+        args: [--fix]
+      - id: ruff-format
+        name: Run Ruff (Formatting)
+        description: Run Ruff formatter for Python code.
+
+  # 2. MyPy - Type checking
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.14.0
+    hooks:
+      - id: mypy
+        name: Run MyPy (Type Checking)
+        description: Run MyPy type checker for Python.
+        additional_dependencies:
+          - pydantic>=2.5.0
+          - sqlalchemy>=2.0.0
+          - types-redis>=4.6.0
+        files: src/mcp_database/
+        args:
+          - --config-file=pyproject.toml
+          - --no-error-summary
+          - --ignore-missing-imports
+
+  # 3. Trailing whitespace fixer
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        name: Fix Trailing Whitespace
+        description: Trims trailing whitespace from lines.
+      - id: end-of-file-fixer
+        name: Fix End of File
+        description: Ensures files end with a newline.
+      - id: check-yaml
+        name: Check YAML Syntax
+        description: Checks YAML files for syntax errors.
+      - id: check-json
+        name: Check JSON Syntax
+        description: Checks JSON files for syntax errors.
+      - id: check-added-large-files
+        name: Check Large Files
+        description: Prevents large files from being committed.
+        args: ['--maxkb=1000']
+
+  # 4. Shell script linting (if scripts exist)
+  - repo: https://github.com/shellcheck-py/shellcheck-precommit
+    rev: v0.10.0
+    hooks:
+      - id: shellcheck
+        name: Run ShellCheck
+        description: Lints shell scripts.
+
+  # 5. Python-specific checks
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: python-check-blanket-noqa
+        name: Check Blanket noqa
+        description: Enforces specific noqa comments.
+      - id: python-sort-imports
+        name: Sort Python Imports
+        description: Sorts Python imports.
+        args: ['--virtual-env=.venv', '--combine-as', '--force-single-line']
+
+# Exclude patterns - files to skip
+exclude: '^(.git|__pycache__|\.pytest_cache|\.venv|venv|node_modules|\.tox|dist|build|\.eggs|.*\.egg-info|htmlcov|\.coverage|coverage\.xml|\.mypy_cache|\.ruff_cache)/'
+
+# Stages - run checks in specific order
+# default stages: [commit, push]
+
+# Fail fast - stop on first failure
+fail_fast: false
+
+# Print info messages
+verbose: true
