@@ -1,75 +1,46 @@
-# MCP Database SDK
+# 🚀 MCP Database SDK
 
-<div align="center">
+_A unified database operation SDK for Large Language Models_
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/Tests-passing-green.svg)]()
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE) [![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/) [![Tests](https://img.shields.io/badge/Tests-passing-green.svg)]()
 
-**A unified database operation SDK for Large Language Models.**
-
-[🏠 Home](README.md) • [📖 Docs](docs/README_zh.md) • [🔧 API](docs/API_REFERENCE.md) • [🤝 Contributing](docs/CONTRIBUTING.md)
+**The missing link between LLMs and your database.**
 
 ---
 
-</div>
+[📖 Documentation](docs/README_zh.md) · [🔧 API Reference](docs/API_REFERENCE.md) · [🤝 Contributing](docs/CONTRIBUTING.md) · [🏗️ Architecture](docs/ARCHITECTURE.md)
 
-## 🌟 Key Features
+---
 
-<table>
-<tr>
-<td width="50%">
+## ✨ Why MCP Database SDK?
 
-### 🔄 Unified Interface
-- **Consistent API** across 7 databases
-- **Async-first** design with modern Python
-- **CRUD operations** made simple
-- **Filter DSL** for flexible queries
+| | |
+|:--|:--|
+| **🔄 One SDK, Seven Databases** | Write once, run anywhere. Same API for PostgreSQL, MySQL, SQLite, MongoDB, Redis, OpenSearch, Supabase |
+| **⚡ Built for Speed** | Async-first architecture with connection pooling and optimized drivers (SQLAlchemy 2.0, Motor) |
 
-</td>
-<td width="50%">
+---
 
-### 🔒 Enterprise Security
-- **SQL injection** prevention
-- **Permission control** system
-- **Audit logging** support
-- **Table validation**
+## 🎯 Key Features
 
-</td>
-</tr>
-<tr>
-<td width="50%">
-
-### 🗄️ Multi-Database Support
-- **PostgreSQL**, MySQL, SQLite
-- **MongoDB**, Redis
-- **OpenSearch**, Supabase
-- **Adapter pattern** for extensibility
-
-</td>
-<td width="50%">
-
-### ⚡ High Performance
-- **Async operations** throughout
-- **Connection pooling**
-- **SQLAlchemy 2.0** async API
-- **Motor** async driver for MongoDB
-
-</td>
-</tr>
-</table>
+| | |
+|:--|:--|
+| **🔄 Unified Interface** | Consistent API across 7 databases with async-first design |
+| **🔒 Enterprise Security** | SQL injection prevention, permission control, audit logging |
+| **🗄️ Multi-Database Support** | PostgreSQL, MySQL, SQLite, MongoDB, Redis, OpenSearch, Supabase |
+| **⚡ High Performance** | Async operations, connection pooling, optimized drivers |
 
 ---
 
 ## 🚀 Quick Start
 
-### Installation
+### 📦 Installation
 
 ```bash
-pip install -e ".[dev]"
+pip install mcp-database
 ```
 
-### Basic Usage
+### ⚡ Quick Example
 
 ```python
 from mcp_database import create_adapter
@@ -102,21 +73,21 @@ await adapter.disconnect()
 
 ---
 
-## 📦 Supported Databases
+## 🗄️ Supported Databases
 
-| Database | Type | Async Driver | Status |
-|----------|------|--------------|--------|
-| PostgreSQL | SQL | asyncpg | ✅ Stable |
-| MySQL | SQL | aiomysql | ✅ Stable |
-| SQLite | SQL | aiosqlite | ✅ Stable |
-| MongoDB | NoSQL | Motor | ✅ Stable |
-| Redis | NoSQL | redis[asyncio] | ✅ Stable |
-| OpenSearch | NoSQL | opensearch-py | ✅ Stable |
-| Supabase | HTTP | httpx | ✅ Stable |
+| Database | Type | Driver | |
+|----------|------|--------|-|
+| 🐘 **PostgreSQL** | SQL | asyncpg | ✅ |
+| 🐬 **MySQL** | SQL | aiomysql | ✅ |
+| 📦 **SQLite** | SQL | aiosqlite | ✅ |
+| 🍃 **MongoDB** | NoSQL | Motor | ✅ |
+| ⚡ **Redis** | NoSQL | redis[asyncio] | ✅ |
+| 🔍 **OpenSearch** | NoSQL | opensearch-py | ✅ |
+| 🔥 **Supabase** | HTTP | httpx | ✅ |
 
 ---
 
-## 📂 Project Structure
+## 📁 Project Structure
 
 ```
 mcp-database/
@@ -170,45 +141,35 @@ config = DatabaseConfig(
 
 ---
 
-## 📖 Filter DSL
+## 🔍 Filter DSL
 
-The SDK provides a flexible filter DSL for building queries:
+Powerful query builder with intuitive operators:
 
-### Operators
-
-| Operator | Description | Example |
-|----------|-------------|---------|
-| `gt` | Greater than | `{"age__gt": 18}` |
-| `lt` | Less than | `{"price__lt": 100}` |
-| `gte` | Greater than or equal | `{"score__gte": 60}` |
-| `lte` | Less than or equal | `{"stock__lte": 0}` |
-| `contains` | Contains substring | `{"name__contains": "John"}` |
-| `startswith` | Starts with prefix | `{"email__startswith": "admin"}` |
-| `endswith` | Ends with suffix | `{"file__endswith": ".pdf"}` |
-| `in` | Value in list | `{"status__in": ["active", "pending"]}` |
-| `not_in` | Value not in list | `{"role__not_in": ["admin"]}` |
-| `isnull` | Is NULL | `{"deleted_at__isnull": True}` |
-| `notnull` | Is NOT NULL | `{"created_at__notnull": True}` |
+| Operator | Meaning | Example |
+|:---------|---------|---------|
+| `__gt` | Greater than | `{"age__gt": 18}` |
+| `__lt` | Less than | `{"price__lt": 100}` |
+| `__gte` | ≥ | `{"score__gte": 60}` |
+| `__lte` | ≤ | `{"stock__lte": 0}` |
+| `__contains` | Contains | `{"name__contains": "John"}` |
+| `__startswith` | Starts with | `{"email__startswith": "admin"}` |
+| `__endswith` | Ends with | `{"file__endswith": ".pdf"}` |
+| `__in` | In list | `{"status__in": ["active"]}` |
+| `__isnull` | Is NULL | `{"deleted_at__isnull": True}` |
 
 ---
 
-## 🛡️ Security Features
+## 🛡️ Security Built-In
 
-### SQL Injection Prevention
-
-All queries use parameterized queries to prevent SQL injection:
+#### SQL Injection Protection
+All queries use parameterized queries automatically.
 
 ```python
-# Safe - using parameterized queries
-await adapter.query("users", filters={"name": "John"})
-
-# The SDK automatically uses parameterized queries
-# instead of string concatenation
+await adapter.query("users", filters={"name": "John"})  # Safe ✅
 ```
 
-### Dangerous Query Detection
-
-The `SQLSecurityChecker` detects and blocks dangerous queries:
+#### Dangerous Query Detection
+The `SQLSecurityChecker` blocks harmful queries:
 
 ```python
 from mcp_database.core.security import SQLSecurityChecker
@@ -216,21 +177,6 @@ from mcp_database.core.security import SQLSecurityChecker
 checker = SQLSecurityChecker()
 result = checker.check("DROP TABLE users")
 # result.is_safe = False
-# result.reason = "禁止的关键字: DROP"
-```
-
-### Permission Control
-
-Operations can be restricted based on permissions:
-
-```python
-from mcp_database.core.permissions import check_execute_permission
-
-class MyAdapter(SQLAdapter):
-    @check_execute_permission
-    async def execute(self, query: str, params: dict = None):
-        # Only executes if permission is granted
-        pass
 ```
 
 ---
@@ -240,124 +186,52 @@ class MyAdapter(SQLAdapter):
 ### Run Tests
 
 ```bash
-# Install test dependencies
+# Install dependencies
 pip install -e ".[dev]"
 
 # Start test databases
 docker-compose -f docker-compose.test.yml up -d
 
-# Run all tests
-pytest
-
-# Run with coverage
-pytest --cov=mcp_database
-
-# Run specific test file
-pytest tests/test_adapter.py
-
-# Run single test function
-pytest tests/test_adapter.py::test_postgresql_connect
+# Run tests
+pytest              # All tests
+pytest --cov=mcp_database  # With coverage
 ```
 
 ---
 
-## 📚 Documentation
+## 📖 Documentation
 
-- [README (English)](README.md)
-- [README (中文)](docs/README_zh.md)
-- [Architecture](docs/ARCHITECTURE.md)
-- [API Reference](docs/API_REFERENCE.md)
-- [Contributing Guide](docs/CONTRIBUTING.md)
+| Guide | Description |
+|-------|-------------|
+| [中文文档](docs/README_zh.md) | Chinese README |
+| [Architecture](docs/ARCHITECTURE.md) | System design |
+| [API Reference](docs/API_REFERENCE.md) | Full API docs |
+| [Contributing](docs/CONTRIBUTING.md) | Contribution guide |
 
 ---
 
 ## 🤝 Contributing
 
-<div align="center">
+We welcome contributions!
 
-### 💖 We Love Contributors!
-
-</div>
-
-<table>
-<tr>
-<td width="33%" align="center">
-
-### 🐛 Report Bugs
-Found a bug?<br>
-[Create an Issue](../../issues)
-
-</td>
-<td width="33%" align="center">
-
-### 💡 Request Features
-Have an idea?<br>
-[Start a Discussion](../../discussions)
-
-</td>
-<td width="33%" align="center">
-
-### 🔧 Submit PRs
-Want to contribute?<br>
-[Fork & PR](../../pulls)
-
-</td>
-</tr>
-</table>
+| Action | Description |
+|--------|-------------|
+| [🐛 Report Bug](../../issues) | Found an issue? Let us know |
+| [💡 Request Feature](../../discussions) | Have an idea? Share it |
+| [🔧 Submit PR](../../pulls) | Want to contribute code? |
 
 ---
 
 ## 📄 License
 
-<div align="center">
-
-This project is licensed under the MIT License.
-
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-
-</div>
+Licensed under [MIT](LICENSE).
 
 ---
-
-## 🙏 Acknowledgments
-
-<div align="center">
-
-### Built With Amazing Tools
-
-<table>
-<tr>
-<td align="center" width="25%">
-<b>Python</b>
-</td>
-<td align="center" width="25%">
-<b>SQLAlchemy</b>
-</td>
-<td align="center" width="25%">
-<b>Motor</b>
-</td>
-<td align="center" width="25%">
-<b>Pydantic</b>
-</td>
-</tr>
-</table>
-
-</div>
-
----
-
-<div align="center">
-
-### 💝 Support This Project
-
-If you find this project useful, please consider giving it a ⭐️!
 
 **Built with ❤️ by Kirky.X**
 
-[⬆ Back to Top](#-mcp-database-sdk)
+<a href="../../stargazers">
+  <img src="https://img.shields.io/github/stars/Kirky-X/mcp-db?style=social" alt="Stars">
+</a>
 
----
-
-<sub>© 2026 Kirky.X. All rights reserved.</sub>
-
-</div>
+<sub>© 2026 Kirky.X</sub>
