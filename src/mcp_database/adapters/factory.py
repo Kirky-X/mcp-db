@@ -124,6 +124,11 @@ class AdapterFactory:
         """
         url_lower = url.lower()
 
+        # 首先检查 postgresql+supabase:// (必须在 supabase 检查之前)
+        # 这个返回 "postgresql" 因为 create_adapter 返回 SQLAdapter
+        if url_lower.startswith("postgresql+supabase://"):
+            return "postgresql"
+
         # 检查特殊类型（HTTP-based）
         if url_lower.startswith("http://") or url_lower.startswith("https://"):
             if ":9200" in url_lower or ":9201" in url_lower:
@@ -131,10 +136,8 @@ class AdapterFactory:
             if "supabase.co" in url_lower:
                 return "supabase"
 
-        # 检查 supabase 字符串（用于 postgresql+supabase:// 等）
-        # 这个检查必须在 prefix_type 检查之前，因为原始代码的行为是：
-        # get_adapter_type("postgresql+supabase://...") 返回 "supabase"
-        # 但 create_adapter("postgresql+supabase://...") 返回 SQLAdapter
+        # 检查 supabase 字符串（仅用于 http/https 的 Supabase）
+        # 注意：postgresql+supabase:// 已经在上面处理，返回 "postgresql"
         if "supabase" in url_lower:
             return "supabase"
 

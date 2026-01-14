@@ -92,6 +92,8 @@ class DatabaseConfig(BaseModel):
     @classmethod
     def validate_url(cls, v: str) -> str:
         """验证 URL 格式并检查安全性"""
+        import logging
+
         if not v:
             raise ValueError("Database URL cannot be empty")
 
@@ -113,6 +115,17 @@ class DatabaseConfig(BaseModel):
                 # 检查 scheme 格式是否有效（应只包含字母、数字、+）
                 if not all(c.isalnum() or c in "+-" for c in scheme_lower):
                     raise ValueError(f"Invalid scheme format: {parsed.scheme}")
+
+            # 安全警告：检查 URL 中是否包含嵌入式凭据
+            if parsed.password or parsed.username:
+                logger = logging.getLogger(__name__)
+                logger.warning(
+                    "Security advisory: Database URL contains embedded credentials. "
+                    "Consider using environment variables instead. "
+                    "URL format: %s://[username]:[password]@host...",
+                    parsed.scheme if parsed.scheme else "unknown",
+                )
+
         except ValueError:
             raise
         except Exception as e:

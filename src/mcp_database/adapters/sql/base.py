@@ -52,6 +52,8 @@ class SQLAdapter(DatabaseAdapter):
         self._session_factory: async_sessionmaker[AsyncSession] | None = None
         self._connected: bool = False
         self._filter_translator = SQLFilterTranslator()
+        # 缓存安全检查器实例，避免重复创建
+        self._security_checker = SQLSecurityChecker()
 
     @property
     def is_connected(self) -> bool:
@@ -254,19 +256,30 @@ class SQLAdapter(DatabaseAdapter):
                 sql = self._build_insert_sql(table, columns, use_returning)
                 stmt = text(sql)
 
+                inserted_ids: list[Any] = []
+
                 if len(data_list) > 1:
-                    # 批量执行
-                    results = await session.execute(stmt, data_list)
-                    inserted_ids = []
-                    for result in results:
-                        inserted_id = self._extract_inserted_id(result, use_returning)
-                        if inserted_id:
-                            inserted_ids.append(inserted_id)
+                    # 批量执行 - 根据数据库类型处理
+                    if use_returning:
+                        # PostgreSQL: 支持 RETURNING，可以批量获取 ID
+                        results = await session.execute(stmt, data_list)
+                        for result in results:
+                            inserted_id = self._extract_inserted_id(result, use_returning)
+                            if inserted_id:
+                                inserted_ids.append(inserted_id)
+                    else:
+                        # SQLite/MySQL: 逐条执行以获取 lastrowid
+                        for data_item in data_list:
+                            result = await session.execute(stmt, data_item)
+                            inserted_id = self._extract_inserted_id(result, use_returning)
+                            if inserted_id:
+                                inserted_ids.append(inserted_id)
                 else:
                     # 单条执行
                     result = await session.execute(stmt, data_list[0])
                     inserted_id = self._extract_inserted_id(result, use_returning)
-                    inserted_ids = [inserted_id] if inserted_id else []
+                    if inserted_id:
+                        inserted_ids = [inserted_id]
 
                 await session.commit()
 
@@ -304,7 +317,7 @@ class SQLAdapter(DatabaseAdapter):
 
                 stmt = text(sql)
                 result = await session.execute(stmt, params)
-                deleted_count = result.rowcount
+                deleted_count = result.rowcount if hasattr(result, "rowcount") else 0
                 await session.commit()
 
                 return DeleteResult(deleted_count=deleted_count)
@@ -348,7 +361,7 @@ class SQLAdapter(DatabaseAdapter):
 
                 stmt = text(sql)
                 result = await session.execute(stmt, all_params)
-                updated_count = result.rowcount
+                updated_count = result.rowcount if hasattr(result, "rowcount") else 0
                 await session.commit()
 
                 return UpdateResult(updated_count=updated_count)
@@ -451,11 +464,9 @@ class SQLAdapter(DatabaseAdapter):
             PermissionError: 权限不足时抛出
         """
         try:
-            # 执行SQL安全检查
-            security_checker = SQLSecurityChecker()
-
+            # 执行SQL安全检查（使用缓存的检查器实例）
             allow_ddl = os.getenv("MCP_DATABASE_TEST_MODE") == "true"
-            check_result = security_checker.check(query, params, allow_ddl=allow_ddl)
+            check_result = self._security_checker.check(query, params, allow_ddl=allow_ddl)
             if not check_result.is_safe:
                 raise QueryError(f"SQL injection detected: {check_result.reason}")
 
@@ -468,12 +479,14 @@ class SQLAdapter(DatabaseAdapter):
                 result = await session.execute(stmt)
 
                 # 判断是否有返回数据
-                if result.returns_rows:
+                # SQLAlchemy 2.0: 使用 munged_rows 或检查结果类型
+                try:
                     data = [dict(row._mapping) for row in result.fetchall()]
-                else:
+                except Exception:
+                    # 如果 fetchall 失败，说明没有返回行
                     data = None
 
-                rows_affected = result.rowcount
+                rows_affected = result.rowcount if hasattr(result, "rowcount") else 0
                 await session.commit()
 
                 return ExecuteResult(
@@ -531,12 +544,15 @@ class SQLAdapter(DatabaseAdapter):
                     stmt = stmt.bindparams(**query_params)
 
                 result = await session.execute(stmt)
+                try:
+                    result_data = [dict(row._mapping) for row in result.fetchall()]
+                except Exception:
+                    result_data = None
+
                 results.append(
                     {
-                        "rows_affected": result.rowcount,
-                        "data": [dict(row._mapping) for row in result.fetchall()]
-                        if result.returns_rows
-                        else None,
+                        "rows_affected": result.rowcount if hasattr(result, "rowcount") else 0,
+                        "data": result_data,
                     }
                 )
 

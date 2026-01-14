@@ -207,12 +207,18 @@ class OpenSearchAdapter(DatabaseAdapter):
             query = self._build_query(filters)
             search_result = await self._client.search(index=table, body={"query": query})
 
-            # 删除文档
-            deleted_count = 0
-            for hit in search_result["hits"]["hits"]:
-                doc_id = hit["_id"]
-                await self._client.delete(index=table, id=doc_id)
-                deleted_count += 1
+            # 使用 bulk API 批量删除
+            hits = search_result["hits"]["hits"]
+            if hits:
+                operations = [{"delete": {"_index": table, "_id": hit["_id"]}} for hit in hits]
+                response = await self._client.bulk(body=operations)
+                deleted_count = sum(
+                    1
+                    for item in response.get("items", [])
+                    if item.get("delete", {}).get("result") == "deleted"
+                )
+            else:
+                deleted_count = 0
 
             return DeleteResult(deleted_count=deleted_count)
 
@@ -242,12 +248,20 @@ class OpenSearchAdapter(DatabaseAdapter):
             query = self._build_query(filters)
             search_result = await self._client.search(index=table, body={"query": query})
 
-            # 更新文档
-            updated_count = 0
-            for hit in search_result["hits"]["hits"]:
-                doc_id = hit["_id"]
-                await self._client.update(index=table, id=doc_id, body={"doc": data})
-                updated_count += 1
+            # 使用 bulk API 批量更新
+            hits = search_result["hits"]["hits"]
+            if hits:
+                operations = [
+                    {"update": {"_index": table, "_id": hit["_id"]}, "doc": data} for hit in hits
+                ]
+                response = await self._client.bulk(body=operations)
+                updated_count = sum(
+                    1
+                    for item in response.get("items", [])
+                    if "update" in item and item["update"].get("result") in ("updated", "created")
+                )
+            else:
+                updated_count = 0
 
             return UpdateResult(updated_count=updated_count)
 

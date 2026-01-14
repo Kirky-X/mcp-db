@@ -1,6 +1,7 @@
 """Supabase REST API 适配器（异步版）"""
 
 import os
+from typing import Any
 
 import httpx
 from httpx import ConnectError, HTTPStatusError, TimeoutException
@@ -35,14 +36,14 @@ class SupabaseAdapter(DatabaseAdapter):
         """
         super().__init__(config)
         self._client: httpx.AsyncClient | None = None
-        self._is_connected: bool = False
+        self._connected: bool = False
         self._supabase_url: str | None = None
         self._supabase_key: str | None = None
 
     @property
     def is_connected(self) -> bool:
         """是否已连接"""
-        return self._is_connected
+        return self._connected
 
     async def connect(self) -> None:
         """
@@ -57,9 +58,7 @@ class SupabaseAdapter(DatabaseAdapter):
             self._supabase_key = os.getenv("SUPABASE_KEY")
 
             if not self._supabase_url or not self._supabase_key:
-                raise ConnectionError(
-                    "SUPABASE_URL and SUPABASE_KEY environment variables are required"
-                )
+                raise ConnectionError("Missing required Supabase credentials")
 
             # 创建异步 HTTP 客户端
             self._client = httpx.AsyncClient(
@@ -76,7 +75,7 @@ class SupabaseAdapter(DatabaseAdapter):
             # 测试连接
             await self._client.get("/")
 
-            self._is_connected = True
+            self._connected = True
 
         except Exception as e:
             translated = ExceptionTranslator.translate(e, "supabase")
@@ -87,9 +86,9 @@ class SupabaseAdapter(DatabaseAdapter):
         if self._client:
             await self._client.aclose()
             self._client = None
-        self._is_connected = False
+        self._connected = False
 
-    async def insert(self, table: str, data: dict[str, any]) -> InsertResult:
+    async def insert(self, table: str, data: dict[str, Any]) -> InsertResult:
         """
         插入文档
 
@@ -105,15 +104,12 @@ class SupabaseAdapter(DatabaseAdapter):
             ConnectionError: 连接错误时抛出
         """
         try:
-            # 批量插入
+            # 批量插入 - 使用 Supabase 的批量插入功能
             if isinstance(data, list):
-                inserted_ids = []
-                for doc in data:
-                    response = await self._client.post(f"/rest/v1/{table}", json=doc)
-                    response.raise_for_status()
-                    result = response.json()
-                    if result:
-                        inserted_ids.append(result[0].get("id"))
+                response = await self._client.post(f"/rest/v1/{table}", json=data)
+                response.raise_for_status()
+                results = response.json()
+                inserted_ids = [r.get("id") for r in results if r.get("id")]
 
                 return InsertResult(
                     inserted_count=len(inserted_ids), inserted_ids=inserted_ids, success=True
@@ -142,7 +138,7 @@ class SupabaseAdapter(DatabaseAdapter):
             translated = ExceptionTranslator.translate(e, "supabase")
             raise translated
 
-    async def delete(self, table: str, filters: dict[str, any]) -> DeleteResult:
+    async def delete(self, table: str, filters: dict[str, Any]) -> DeleteResult:
         """
         删除文档
 
@@ -189,7 +185,7 @@ class SupabaseAdapter(DatabaseAdapter):
             raise translated
 
     async def update(
-        self, table: str, data: dict[str, any], filters: dict[str, any]
+        self, table: str, data: dict[str, Any], filters: dict[str, Any]
     ) -> UpdateResult:
         """
         更新文档
@@ -238,7 +234,7 @@ class SupabaseAdapter(DatabaseAdapter):
             raise translated
 
     async def query(
-        self, table: str, filters: dict[str, any] | None = None, limit: int | None = None
+        self, table: str, filters: dict[str, Any] | None = None, limit: int | None = None
     ) -> QueryResult:
         """
         查询文档
@@ -313,7 +309,7 @@ class SupabaseAdapter(DatabaseAdapter):
             translated = ExceptionTranslator.translate(e, "supabase")
             raise translated
 
-    async def execute(self, query: str, params: dict[str, any] | None = None) -> ExecuteResult:
+    async def execute(self, query: str, params: dict[str, Any] | None = None) -> ExecuteResult:
         """
         执行原生查询（Supabase REST API 不支持 SQL，此方法抛出异常）
 
@@ -329,7 +325,7 @@ class SupabaseAdapter(DatabaseAdapter):
         """
         raise QueryError("Supabase REST API does not support SQL queries")
 
-    async def advanced_query(self, operation: str, params: dict[str, any]) -> AdvancedResult:
+    async def advanced_query(self, operation: str, params: dict[str, Any]) -> AdvancedResult:
         """
         执行高级查询
 

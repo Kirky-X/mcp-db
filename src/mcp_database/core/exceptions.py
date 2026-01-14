@@ -125,7 +125,9 @@ class ExceptionTranslator:
         Returns:
             转换后的标准异常
         """
-        error_message = str(original_error).lower()
+        # 始终对错误消息进行脱敏，防止敏感信息泄露
+        sanitized_message = _sanitize_error_message(str(original_error))
+        error_message = sanitized_message.lower()
         database_type = database_type.lower()
 
         # 选择错误映射表
@@ -138,8 +140,8 @@ class ExceptionTranslator:
                 error_class = mapped_class
                 break
 
-        # 创建转换后的异常
-        translated_error = error_class(str(original_error), database_type=database_type)
+        # 创建转换后的异常（使用脱敏后的消息）
+        translated_error = error_class(sanitized_message, database_type=database_type)
         translated_error.original_error = original_error
 
         return translated_error

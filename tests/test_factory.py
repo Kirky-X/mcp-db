@@ -89,5 +89,6 @@ class TestAdapterFactory:
         assert AdapterFactory.get_adapter_type("mongodb://localhost/db") == "mongodb"
         assert AdapterFactory.get_adapter_type("redis://localhost/0") == "redis"
         assert AdapterFactory.get_adapter_type("http://localhost:9200") == "opensearch"
-        assert AdapterFactory.get_adapter_type("postgresql+supabase://localhost/db") == "supabase"
+        # postgresql+supabase:// returns "postgresql" to match create_adapter behavior
+        assert AdapterFactory.get_adapter_type("postgresql+supabase://localhost/db") == "postgresql"
         assert AdapterFactory.get_adapter_type("unsupported://localhost/db") is None
