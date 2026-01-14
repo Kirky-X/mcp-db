@@ -59,7 +59,7 @@ class Settings(BaseSettings):
             url=self.database_url,
             pool_size=self.max_connections,
             max_overflow=5,
-            pool_timeout=self.query_timeout,
+            query_timeout=self.query_timeout,
         )
 
     def is_operation_allowed(self, operation: str) -> bool:

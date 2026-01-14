@@ -12,7 +12,7 @@ from mcp_database.core.exceptions import PermissionError
 class PermissionManager:
     """权限管理器"""
 
-    def __init__(self, config=None):
+    def __init__(self, config: Any | None = None):
         """
         初始化权限管理器
 
@@ -46,8 +46,10 @@ class PermissionManager:
 
         return True
 
+    _instance: "PermissionManager | None" = None
+
     @classmethod
-    def get_instance(cls, config=None) -> "PermissionManager":
+    def get_instance(cls, config: Any | None = None) -> "PermissionManager":
         """
         获取单例实例
 
@@ -64,7 +66,9 @@ class PermissionManager:
         return cls._instance
 
 
-def require_permission(operation: str, dangerous: bool = False):
+def require_permission(
+    operation: str, dangerous: bool = False
+) -> Callable[[Callable], Callable[..., Any]]:
     """
     权限检查装饰器
 
@@ -76,14 +80,14 @@ def require_permission(operation: str, dangerous: bool = False):
         装饰器函数
     """
 
-    def decorator(func: Callable) -> Callable:
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         @wraps(func)
-        async def async_wrapper(*args, **kwargs) -> Any:
+        async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
             PermissionManager.get_instance().check_permission(operation, dangerous)
             return await func(*args, **kwargs)
 
         @wraps(func)
-        def sync_wrapper(*args, **kwargs) -> Any:
+        def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
             PermissionManager.get_instance().check_permission(operation, dangerous)
             return func(*args, **kwargs)
 
@@ -95,21 +99,21 @@ def require_permission(operation: str, dangerous: bool = False):
     return decorator
 
 
-def check_insert_permission(func: Callable) -> Callable:
+def check_insert_permission(func: Callable[..., Any]) -> Callable[..., Any]:
     """检查插入权限装饰器"""
     return require_permission("insert")(func)
 
 
-def check_update_permission(func: Callable) -> Callable:
+def check_update_permission(func: Callable[..., Any]) -> Callable[..., Any]:
     """检查更新权限装饰器"""
     return require_permission("update")(func)
 
 
-def check_delete_permission(func: Callable) -> Callable:
+def check_delete_permission(func: Callable[..., Any]) -> Callable[..., Any]:
     """检查删除权限装饰器"""
     return require_permission("delete", dangerous=True)(func)
 
 
-def check_execute_permission(func: Callable) -> Callable:
+def check_execute_permission(func: Callable[..., Any]) -> Callable[..., Any]:
     """检查执行权限装饰器"""
     return require_permission("execute", dangerous=True)(func)

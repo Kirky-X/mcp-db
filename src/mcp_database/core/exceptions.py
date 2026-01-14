@@ -3,7 +3,7 @@
 import asyncio
 import re
 from functools import wraps
-from typing import Any
+from typing import Any, Callable
 
 CREDENTIAL_PATTERNS = [
     re.compile(r"(password|passwd|pwd)[=:]\s*\S+", re.IGNORECASE),
@@ -162,7 +162,9 @@ class ExceptionTranslator:
         return error_maps.get(database_type, {})
 
 
-def handle_adapter_errors(database_type: str = "unknown"):
+def handle_adapter_errors(
+    database_type: str = "unknown",
+) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     def decorator(func: Any) -> Any:
         @wraps(func)
         async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
