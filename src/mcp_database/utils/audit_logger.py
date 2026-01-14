@@ -121,7 +121,7 @@ class AuditLogger:
         if not params:
             return {}
 
-        sanitized = {}
+        sanitized: dict[str, Any] = {}
         for key, value in params.items():
             if self._is_sensitive_key(key):
                 sanitized[key] = "[REDACTED]"
@@ -133,7 +133,7 @@ class AuditLogger:
                 sanitized[key] = value
         return sanitized
 
-    def _sanitize_list(self, items: list) -> list:
+    def _sanitize_list(self, items: list[Any]) -> list[Any]:
         """
         递归清理列表中的敏感信息
 
@@ -171,7 +171,9 @@ class AuditLogger:
         # 2. 从配置获取
         if self._config and hasattr(self._config, "options") and self._config.options:
             if "audit_log_path" in self._config.options:
-                return self._config.options["audit_log_path"]
+                audit_path = self._config.options["audit_log_path"]
+                if isinstance(audit_path, str):
+                    return audit_path
 
         # 3. 使用默认值
         return "./logs/audit.log"
@@ -248,7 +250,7 @@ class AuditLogger:
             self._logger.info(json.dumps(log_entry))
 
 
-def audit_log(operation: str):
+def audit_log(operation: str) -> Callable[[Callable], Callable[..., Any]]:
     """
     审计日志装饰器
 
@@ -259,9 +261,9 @@ def audit_log(operation: str):
         装饰器函数
     """
 
-    def decorator(func: Callable) -> Callable:
+    def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
         @wraps(func)
-        async def async_wrapper(self, *args, **kwargs):
+        async def async_wrapper(self: Any, *args: tuple[Any, ...], **kwargs: Any) -> Any:
             table = args[0] if args else kwargs.get("table", "unknown")
             logger = getattr(self, "_audit_logger", None)
 
@@ -280,7 +282,7 @@ def audit_log(operation: str):
                 raise
 
         @wraps(func)
-        def sync_wrapper(self, *args, **kwargs):
+        def sync_wrapper(self: Any, *args: tuple[Any, ...], **kwargs: Any) -> Any:
             table = args[0] if args else kwargs.get("table", "unknown")
             logger = getattr(self, "_audit_logger", None)
 
@@ -318,7 +320,7 @@ def audit_execute(func: Callable) -> Callable:
     """
 
     @wraps(func)
-    async def async_wrapper(self, *args, **kwargs):
+    async def async_wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
         query = args[0] if args else kwargs.get("query", "unknown")
         logger = getattr(self, "_audit_logger", None)
 
@@ -335,7 +337,7 @@ def audit_execute(func: Callable) -> Callable:
             raise
 
     @wraps(func)
-    def sync_wrapper(self, *args, **kwargs):
+    def sync_wrapper(self: Any, *args: Any, **kwargs: Any) -> Any:
         query = args[0] if args else kwargs.get("query", "unknown")
         logger = getattr(self, "_audit_logger", None)
 
