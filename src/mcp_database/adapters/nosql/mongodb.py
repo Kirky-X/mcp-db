@@ -1,5 +1,7 @@
 """MongoDB 适配器"""
 
+from typing import Any, cast
+
 from motor.motor_asyncio import (
     AsyncIOMotorClient,
     AsyncIOMotorCollection,
@@ -25,6 +27,16 @@ from mcp_database.core.models import (
     UpdateResult,
 )
 
+# 禁止的MongoDB聚合操作符（可能导致代码注入）
+FORBIDDEN_MONGODB_OPS = frozenset({"$where", "$function", "$accumulator", "$graphLookup"})
+
+# 事务操作处理器字典
+_TRANSACTION_HANDLERS = {
+    "insert": lambda collection, data, filters: collection.insert_one(data),
+    "update": lambda collection, data, filters: collection.update_many(filters, {"$set": data}),
+    "delete": lambda collection, data, filters: collection.delete_many(filters),
+}
+
 
 class MongoDBAdapter(DatabaseAdapter):
     """
@@ -45,6 +57,21 @@ class MongoDBAdapter(DatabaseAdapter):
         self._database: AsyncIOMotorDatabase | None = None
         self._connected: bool = False
         self._filter_translator = MongoFilterTranslator()
+
+    def _validate_aggregation_pipeline(self, pipeline: list[dict]) -> None:
+        """
+        验证聚合管道不包含危险操作符
+
+        Args:
+            pipeline: 聚合管道列表
+
+        Raises:
+            QueryError: 包含危险操作符时抛出
+        """
+        for stage in pipeline:
+            for key in stage.keys():
+                if key in FORBIDDEN_MONGODB_OPS:
+                    raise QueryError(f"Forbidden aggregation stage: {key}")
 
     @property
     def is_connected(self) -> bool:
@@ -115,7 +142,7 @@ class MongoDBAdapter(DatabaseAdapter):
             self._database = None
             self._connected = False
 
-    async def insert(self, table: str, data: dict[str, any] | list[dict[str, any]]) -> InsertResult:
+    async def insert(self, table: str, data: dict[str, Any] | list[dict[str, Any]]) -> InsertResult:
         """
         插入文档
 
@@ -138,13 +165,13 @@ class MongoDBAdapter(DatabaseAdapter):
 
             # 批量插入
             if isinstance(data, list):
-                result = await collection.insert_many(data)
-                inserted_ids = result.inserted_ids
+                bulk_result = await collection.insert_many(data)
+                inserted_ids = list(bulk_result.inserted_ids)
                 inserted_count = len(inserted_ids)
             else:
                 # 单条插入
-                result = await collection.insert_one(data)
-                inserted_ids = [result.inserted_id]
+                single_result = await collection.insert_one(data)
+                inserted_ids = [single_result.inserted_id]
                 inserted_count = 1
 
             return InsertResult(inserted_count=inserted_count, inserted_ids=inserted_ids)
@@ -153,7 +180,7 @@ class MongoDBAdapter(DatabaseAdapter):
             translated = ExceptionTranslator.translate(e, "mongodb")
             raise translated
 
-    async def delete(self, table: str, filters: dict[str, any]) -> DeleteResult:
+    async def delete(self, table: str, filters: dict[str, Any]) -> DeleteResult:
         """
         删除文档
 
@@ -183,7 +210,7 @@ class MongoDBAdapter(DatabaseAdapter):
             raise translated
 
     async def update(
-        self, table: str, data: dict[str, any], filters: dict[str, any]
+        self, table: str, data: dict[str, Any], filters: dict[str, Any]
     ) -> UpdateResult:
         """
         更新文档
@@ -215,7 +242,7 @@ class MongoDBAdapter(DatabaseAdapter):
             raise translated
 
     async def query(
-        self, table: str, filters: dict[str, any] | None = None, limit: int | None = None
+        self, table: str, filters: dict[str, Any] | None = None, limit: int | None = None
     ) -> QueryResult:
         """
         查询文档
@@ -271,7 +298,7 @@ class MongoDBAdapter(DatabaseAdapter):
             translated = ExceptionTranslator.translate(e, "mongodb")
             raise translated
 
-    async def execute(self, query: str, params: dict[str, any] | None = None) -> ExecuteResult:
+    async def execute(self, query: str, params: dict[str, Any] | None = None) -> ExecuteResult:
         """
         执行自定义查询（MongoDB 不支持原始 SQL）
 
@@ -287,7 +314,7 @@ class MongoDBAdapter(DatabaseAdapter):
         """
         raise QueryError("MongoDB does not support raw SQL queries. Use query() method instead.")
 
-    async def advanced_query(self, operation: str, params: dict[str, any]) -> AdvancedResult:
+    async def advanced_query(self, operation: str, params: dict[str, Any]) -> AdvancedResult:
         """
         执行高级查询（聚合、事务等）
 
@@ -304,8 +331,13 @@ class MongoDBAdapter(DatabaseAdapter):
         try:
             if operation == "aggregate":
                 # 聚合查询
-                table = params.get("table")
+                table = cast(str, params.get("table"))
+                if not table:
+                    raise QueryError("Missing 'table' parameter for aggregate operation")
                 pipeline = params.get("pipeline", [])
+
+                # 验证聚合管道不包含危险操作符
+                self._validate_aggregation_pipeline(pipeline)
 
                 collection = self._get_collection(table)
                 cursor = collection.aggregate(pipeline)
@@ -320,7 +352,9 @@ class MongoDBAdapter(DatabaseAdapter):
 
             elif operation == "transaction":
                 # 事务操作
-                table = params.get("table")
+                table = cast(str, params.get("table"))
+                if not table:
+                    raise QueryError("Missing 'table' parameter for transaction operation")
                 operations = params.get("operations", [])
 
                 collection = self._get_collection(table)
@@ -333,15 +367,19 @@ class MongoDBAdapter(DatabaseAdapter):
 
                     mongo_filters = self._filter_translator.translate(op_filters)
 
-                    if op_type == "insert":
-                        result = await collection.insert_one(op_data)
-                        results.append({"inserted_id": str(result.inserted_id)})
-                    elif op_type == "update":
-                        result = await collection.update_many(mongo_filters, {"$set": op_data})
-                        results.append({"modified_count": result.modified_count})
-                    elif op_type == "delete":
-                        result = await collection.delete_many(mongo_filters)
-                        results.append({"deleted_count": result.deleted_count})
+                    # 使用字典调度执行操作
+                    handler = _TRANSACTION_HANDLERS.get(op_type)
+                    if handler:
+                        result = handler(collection, op_data, mongo_filters)
+                        # 格式化结果
+                        if op_type == "insert":
+                            results.append({"inserted_id": str(result.inserted_id)})
+                        elif op_type == "update":
+                            results.append({"modified_count": result.modified_count})
+                        elif op_type == "delete":
+                            results.append({"deleted_count": result.deleted_count})
+                    else:
+                        raise QueryError(f"Unsupported operation type: {op_type}")
 
                 return AdvancedResult(operation=operation, data={"results": results})
 

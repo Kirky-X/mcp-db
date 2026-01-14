@@ -137,7 +137,7 @@ class SQLAdapter(DatabaseAdapter):
         """
         try:
             # 根据数据库类型创建引擎参数
-            engine_kwargs = {
+            engine_kwargs: dict[str, Any] = {
                 "pool_pre_ping": True,  # 连接健康检查
                 "echo": False,
             }
@@ -213,7 +213,7 @@ class SQLAdapter(DatabaseAdapter):
             sql += " RETURNING id"
         return sql
 
-    def _extract_inserted_id(self, result, use_returning: bool = True) -> int | None:
+    def _extract_inserted_id(self, result: Any, use_returning: bool = True) -> int | None:
         """
         从执行结果中提取插入的 ID
 
@@ -225,8 +225,10 @@ class SQLAdapter(DatabaseAdapter):
             插入的 ID
         """
         if use_returning and self._database_type == "postgresql":
-            return result.scalar()
-        return result.lastrowid
+            scalar_value = result.scalar()
+            return int(scalar_value) if scalar_value is not None else None
+        last_row_id = result.lastrowid
+        return int(last_row_id) if last_row_id is not None else None
 
     async def insert(self, table: str, data: dict[str, Any] | list[dict[str, Any]]) -> InsertResult:
         """
@@ -262,22 +264,22 @@ class SQLAdapter(DatabaseAdapter):
                     # 批量执行 - 根据数据库类型处理
                     if use_returning:
                         # PostgreSQL: 支持 RETURNING，可以批量获取 ID
-                        results = await session.execute(stmt, data_list)
-                        for result in results:
-                            inserted_id = self._extract_inserted_id(result, use_returning)
+                        batch_results = await session.execute(stmt, data_list)
+                        for db_row in batch_results:
+                            inserted_id = self._extract_inserted_id(db_row, use_returning)
                             if inserted_id:
                                 inserted_ids.append(inserted_id)
                     else:
                         # SQLite/MySQL: 逐条执行以获取 lastrowid
                         for data_item in data_list:
-                            result = await session.execute(stmt, data_item)
-                            inserted_id = self._extract_inserted_id(result, use_returning)
+                            exec_result: Any = await session.execute(stmt, data_item)  # type: ignore[no-redef]
+                            inserted_id = self._extract_inserted_id(exec_result, use_returning)
                             if inserted_id:
                                 inserted_ids.append(inserted_id)
                 else:
                     # 单条执行
-                    result = await session.execute(stmt, data_list[0])
-                    inserted_id = self._extract_inserted_id(result, use_returning)
+                    exec_result: Any = await session.execute(stmt, data_list[0])  # type: ignore[no-redef]
+                    inserted_id = self._extract_inserted_id(exec_result, use_returning)
                     if inserted_id:
                         inserted_ids = [inserted_id]
 
@@ -317,7 +319,7 @@ class SQLAdapter(DatabaseAdapter):
 
                 stmt = text(sql)
                 result = await session.execute(stmt, params)
-                deleted_count = result.rowcount if hasattr(result, "rowcount") else 0
+                deleted_count = getattr(result, "rowcount", 0)  # type: ignore[attr-defined]
                 await session.commit()
 
                 return DeleteResult(deleted_count=deleted_count)
@@ -361,7 +363,7 @@ class SQLAdapter(DatabaseAdapter):
 
                 stmt = text(sql)
                 result = await session.execute(stmt, all_params)
-                updated_count = result.rowcount if hasattr(result, "rowcount") else 0
+                updated_count = getattr(result, "rowcount", 0)  # type: ignore[attr-defined]
                 await session.commit()
 
                 return UpdateResult(updated_count=updated_count)
@@ -397,7 +399,7 @@ class SQLAdapter(DatabaseAdapter):
             async with self._get_session() as session:
                 # 构建查询语句
                 where_clause = ""
-                params = {}
+                params: dict[str, Any] = {}
                 if filters:
                     where_clause, params = self._filter_translator.translate(filters)
 
@@ -486,7 +488,7 @@ class SQLAdapter(DatabaseAdapter):
                     # 如果 fetchall 失败，说明没有返回行
                     data = None
 
-                rows_affected = result.rowcount if hasattr(result, "rowcount") else 0
+                rows_affected = getattr(result, "rowcount", 0)  # type: ignore[attr-defined]
                 await session.commit()
 
                 return ExecuteResult(
@@ -551,7 +553,7 @@ class SQLAdapter(DatabaseAdapter):
 
                 results.append(
                     {
-                        "rows_affected": result.rowcount if hasattr(result, "rowcount") else 0,
+                        "rows_affected": getattr(result, "rowcount", 0),  # type: ignore[attr-defined]
                         "data": result_data,
                     }
                 )
