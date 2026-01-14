@@ -1,6 +1,116 @@
 """测试过滤器 DSL 解析器"""
 
 
+class TestRegexSecurityValidator:
+    """测试正则表达式安全验证器"""
+
+    def test_valid_simple_pattern(self):
+        """测试简单有效模式通过验证"""
+        from mcp_database.core.filters import RegexSecurityValidator
+
+        pattern = "test"
+        result = RegexSecurityValidator.validate(pattern)
+        assert result == "test"
+
+    def test_valid_complex_pattern(self):
+        """测试复杂有效模式通过验证"""
+        from mcp_database.core.filters import RegexSecurityValidator
+
+        pattern = r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}"
+        result = RegexSecurityValidator.validate(pattern)
+        assert result == pattern
+
+    def test_pattern_too_long(self):
+        """测试超长模式抛出异常"""
+        from mcp_database.core.exceptions import QueryError
+        from mcp_database.core.filters import RegexSecurityValidator
+
+        pattern = "a" * 501  # 超过 MAX_REGEX_LENGTH (500)
+        try:
+            RegexSecurityValidator.validate(pattern)
+            assert False, "Should have raised QueryError"
+        except QueryError as e:
+            assert "exceeds maximum length" in str(e)
+
+    def test_nested_quantifiers_double_star(self):
+        """测试双星号量词检测"""
+        from mcp_database.core.exceptions import QueryError
+        from mcp_database.core.filters import RegexSecurityValidator
+
+        pattern = r"a**"
+        try:
+            RegexSecurityValidator.validate(pattern)
+            assert False, "Should have raised QueryError"
+        except QueryError as e:
+            assert "Nested quantifiers" in str(e)
+
+    def test_nested_quantifiers_adjacent(self):
+        """测试相邻量词检测"""
+        from mcp_database.core.exceptions import QueryError
+        from mcp_database.core.filters import RegexSecurityValidator
+
+        pattern = r"a++"
+        try:
+            RegexSecurityValidator.validate(pattern)
+            assert False, "Should have raised QueryError"
+        except QueryError as e:
+            assert "Nested quantifiers" in str(e)
+
+    def test_nested_quantifiers_curly_braces(self):
+        """测试数量词嵌套检测"""
+        from mcp_database.core.exceptions import QueryError
+        from mcp_database.core.filters import RegexSecurityValidator
+
+        pattern = r"a{2}{3}"
+        try:
+            RegexSecurityValidator.validate(pattern)
+            assert False, "Should have raised QueryError"
+        except QueryError as e:
+            assert "Nested quantifiers" in str(e)
+
+    def test_too_many_character_classes(self):
+        """测试过多字符类检测"""
+        from mcp_database.core.exceptions import QueryError
+        from mcp_database.core.filters import RegexSecurityValidator
+
+        # 创建超过 MAX_CHAR_CLASSES (10) 的字符类
+        pattern = "[a][b][c][d][e][f][g][h][i][j][k]"
+        try:
+            RegexSecurityValidator.validate(pattern)
+            assert False, "Should have raised QueryError"
+        except QueryError as e:
+            assert "character classes" in str(e)
+
+    def test_too_many_alternations(self):
+        """测试过多交替检测"""
+        from mcp_database.core.exceptions import QueryError
+        from mcp_database.core.filters import RegexSecurityValidator
+
+        # 创建超过 MAX_ALTERNATIONS (20) 的交替
+        # 22 个元素会产生 21 个分隔符
+        pattern = "|".join(["a"] * 22)
+        try:
+            RegexSecurityValidator.validate(pattern)
+            assert False, "Should have raised QueryError"
+        except QueryError as e:
+            assert "alternations" in str(e)
+
+    def test_count_nested_quantifiers(self):
+        """测试嵌套量词计数"""
+        from mcp_database.core.filters import RegexSecurityValidator
+
+        # 没有嵌套量词
+        assert RegexSecurityValidator._count_nested_quantifiers("test") == 0
+        assert RegexSecurityValidator._count_nested_quantifiers(r"[a-z]+") == 0
+
+        # 单个嵌套量词
+        assert RegexSecurityValidator._count_nested_quantifiers(r"a**") == 1
+        assert RegexSecurityValidator._count_nested_quantifiers(r"a++") == 1
+
+        # 多个嵌套量词
+        assert RegexSecurityValidator._count_nested_quantifiers(r"a**b++") == 2
+
+
 class TestFilterParser:
     """测试 FilterParser 基类"""
 

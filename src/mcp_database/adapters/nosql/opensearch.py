@@ -1,13 +1,23 @@
 """OpenSearch 适配器"""
 
+import os
 import ssl
 from typing import Any
 
-from opensearchpy import AsyncOpenSearch
-from opensearchpy.exceptions import OpenSearchException
+# OpenSearch异常类和客户端（使用兼容的导入方式）
+try:
+    from opensearch import AsyncOpenSearch
+    from opensearch.exceptions import OpenSearchException
+except ImportError:
+    # 如果没有安装opensearch-py，使用占位符
+    OpenSearchException = Exception
+    AsyncOpenSearch = None
 
 from mcp_database.core.adapter import DatabaseAdapter
-from mcp_database.core.exceptions import ExceptionTranslator, QueryError
+from mcp_database.core.exceptions import (
+    ExceptionTranslator,
+    QueryError,
+)
 from mcp_database.core.models import (
     AdvancedResult,
     Capability,
@@ -18,6 +28,37 @@ from mcp_database.core.models import (
     QueryResult,
     UpdateResult,
 )
+
+# OpenSearch 查询操作符映射
+_QUERY_OPERATORS = {
+    "gt": lambda field, value: {"range": {field: {"gt": value}}},
+    "lt": lambda field, value: {"range": {field: {"lt": value}}},
+    "gte": lambda field, value: {"range": {field: {"gte": value}}},
+    "lte": lambda field, value: {"range": {field: {"lte": value}}},
+    "in": lambda field, value: {"terms": {field: value}},
+    "contains": lambda field, value: {"match": {field: value}},
+}
+
+# 允许的OpenSearch索引（从环境变量配置，使用延迟加载避免模块加载时执行）
+_ALLOWED_INDICES_CACHE: frozenset[str] | None = None
+
+
+def _get_allowed_indices() -> frozenset[str]:
+    """获取允许的 OpenSearch 索引（延迟加载）"""
+    global _ALLOWED_INDICES_CACHE
+    if _ALLOWED_INDICES_CACHE is None:
+        env_indices = os.getenv("OPENSEARCH_ALLOWED_INDICES", "")
+        if env_indices:
+            _ALLOWED_INDICES_CACHE = frozenset(
+                index.strip() for index in env_indices.split(",") if index.strip()
+            )
+        else:
+            _ALLOWED_INDICES_CACHE = frozenset({"*"})
+    return _ALLOWED_INDICES_CACHE
+
+
+# 禁止的查询参数
+FORBIDDEN_QUERY_PARAMS = frozenset({"_source", "script", "script_fields"})
 
 
 class OpenSearchAdapter(DatabaseAdapter):
@@ -32,12 +73,12 @@ class OpenSearchAdapter(DatabaseAdapter):
         """
         super().__init__(config)
         self._client: AsyncOpenSearch | None = None
-        self._is_connected: bool = False
+        self._connected: bool = False
 
     @property
     def is_connected(self) -> bool:
         """是否已连接"""
-        return self._is_connected
+        return self._connected
 
     async def connect(self) -> None:
         """
@@ -72,7 +113,7 @@ class OpenSearchAdapter(DatabaseAdapter):
             # 测试连接
             await self._client.ping()
 
-            self._is_connected = True
+            self._connected = True
 
         except OpenSearchException as e:
             translated = ExceptionTranslator.translate(e, "opensearch")
@@ -83,7 +124,7 @@ class OpenSearchAdapter(DatabaseAdapter):
         if self._client:
             await self._client.close()
             self._client = None
-            self._is_connected = False
+            self._connected = False
 
     async def insert(self, table: str, data: dict[str, Any]) -> InsertResult:
         """
@@ -281,6 +322,49 @@ class OpenSearchAdapter(DatabaseAdapter):
         """
         raise QueryError("OpenSearch does not support SQL queries")
 
+    def _validate_index_access(self, index: str) -> None:
+        """
+        验证索引访问权限
+
+        Args:
+            index: 要访问的索引名
+
+        Raises:
+            QueryError: 索引不允许访问时抛出
+        """
+        # 禁止通配符访问
+        if "*" in index:
+            raise QueryError("Wildcard index access not allowed")
+
+        # 如果配置了允许的索引列表，检查是否在白名单中
+        allowed_indices = _get_allowed_indices()
+        if allowed_indices and "*" not in allowed_indices:
+            if index not in allowed_indices:
+                raise QueryError(f"Index '{index}' not allowed")
+
+    def _validate_query_body(self, body: dict[str, Any]) -> None:
+        """
+        验证查询体不包含危险参数
+
+        Args:
+            body: 查询体
+
+        Raises:
+            QueryError: 包含危险参数时抛出
+        """
+
+        def check_dict(d: dict) -> bool:
+            for key in d.keys():
+                if key in FORBIDDEN_QUERY_PARAMS:
+                    return True
+                if isinstance(d[key], dict):
+                    if check_dict(d[key]):
+                        return True
+            return False
+
+        if check_dict(body):
+            raise QueryError("Query contains forbidden parameters")
+
     async def advanced_query(self, operation: str, params: dict[str, Any]) -> AdvancedResult:
         """
         执行高级查询
@@ -298,9 +382,16 @@ class OpenSearchAdapter(DatabaseAdapter):
         try:
             if operation == "aggregation":
                 # 聚合查询
-                result = await self._client.search(
-                    index=params.get("index", "*"), body=params.get("body", {})
-                )
+                index = params.get("index", "*")
+                body = params.get("body", {})
+
+                # 验证索引访问
+                self._validate_index_access(index)
+
+                # 验证查询体
+                self._validate_query_body(body)
+
+                result = await self._client.search(index=index, body=body)
                 return AdvancedResult(
                     data=result.get("aggregations", {}), operation=operation, success=True
                 )
@@ -346,20 +437,12 @@ class OpenSearchAdapter(DatabaseAdapter):
             if "__" in field:
                 # 操作符
                 field_name, operator = field.split("__", 1)
-                if operator == "gt":
-                    must_clauses.append({"range": {field_name: {"gt": value}}})
-                elif operator == "lt":
-                    must_clauses.append({"range": {field_name: {"lt": value}}})
-                elif operator == "gte":
-                    must_clauses.append({"range": {field_name: {"gte": value}}})
-                elif operator == "lte":
-                    must_clauses.append({"range": {field_name: {"lte": value}}})
-                elif operator == "in":
-                    must_clauses.append({"terms": {field_name: value}})
-                elif operator == "contains":
-                    # 使用 match 查询来实现包含功能
-                    must_clauses.append({"match": {field_name: value}})
+                # 使用字典查找操作符处理器
+                query_builder = _QUERY_OPERATORS.get(operator)
+                if query_builder:
+                    must_clauses.append(query_builder(field_name, value))
                 else:
+                    # 默认使用 match 查询
                     must_clauses.append({"match": {field_name: value}})
             else:
                 # 等值查询 - 使用 match 而不是 term，因为 term 需要精确匹配

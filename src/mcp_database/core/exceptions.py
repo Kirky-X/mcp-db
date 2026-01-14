@@ -1,5 +1,29 @@
 """异常体系定义"""
 
+import asyncio
+import re
+from functools import wraps
+from typing import Any
+
+CREDENTIAL_PATTERNS = [
+    re.compile(r"(password|passwd|pwd)[=:]\s*\S+", re.IGNORECASE),
+    re.compile(r"(api[_-]?key|secret|token)[=:]\s*\S+", re.IGNORECASE),
+    re.compile(r"[A-Za-z0-9+/]{40,}"),
+    re.compile(r"(postgresql|mongodb|redis)://\S+:\S+@"),
+]
+
+# 预编译的脱敏模式（类属性，避免重复编译）
+_SANITIZE_PATTERNS = CREDENTIAL_PATTERNS
+
+
+def _sanitize_error_message(message: str) -> str:
+    sanitized = message
+    for pattern in CREDENTIAL_PATTERNS:
+        sanitized = pattern.sub("[REDACTED]", sanitized)
+    if len(sanitized) > 500:
+        sanitized = sanitized[:500] + "... [truncated]"
+    return sanitized
+
 
 class DatabaseError(Exception):
     """数据库错误基类"""
@@ -126,3 +150,32 @@ class ExceptionTranslator:
             return cls.REDIS_ERROR_MAP
         else:
             return {}
+
+
+def handle_adapter_errors(database_type: str = "unknown"):
+    def decorator(func: Any) -> Any:
+        @wraps(func)
+        async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+            try:
+                return await func(*args, **kwargs)
+            except DatabaseError:
+                raise
+            except Exception as e:
+                translated = ExceptionTranslator.translate(e, database_type)
+                raise translated
+
+        @wraps(func)
+        def sync_wrapper(*args: Any, **kwargs: Any) -> Any:
+            try:
+                return func(*args, **kwargs)
+            except DatabaseError:
+                raise
+            except Exception as e:
+                translated = ExceptionTranslator.translate(e, database_type)
+                raise translated
+
+        if asyncio.iscoroutinefunction(func):
+            return async_wrapper
+        return sync_wrapper
+
+    return decorator

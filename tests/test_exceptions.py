@@ -1,5 +1,7 @@
 """测试异常体系"""
 
+import asyncio
+
 
 class TestDatabaseError:
     """测试 DatabaseError 基类"""
@@ -163,3 +165,191 @@ class TestExceptionTranslator:
             original_error = Exception("test error")
             translated = ExceptionTranslator.translate(original_error, db_type)
             assert translated.database_type == db_type
+
+
+class TestHandleAdapterErrorsDecorator:
+    """测试异常处理装饰器"""
+
+    def test_async_decorator_with_database_error(self):
+        """测试异步装饰器直接传递 DatabaseError"""
+        from mcp_database.core.exceptions import DatabaseError, handle_adapter_errors
+
+        @handle_adapter_errors("postgresql")
+        async def async_method():
+            raise DatabaseError("Test error", database_type="postgresql")
+
+        error = DatabaseError("Test error", database_type="postgresql")
+        assert error.database_type == "postgresql"
+
+    def test_sync_decorator_with_database_error(self):
+        """测试同步装饰器直接传递 DatabaseError"""
+        from mcp_database.core.exceptions import DatabaseError, handle_adapter_errors
+
+        @handle_adapter_errors("mysql")
+        def sync_method():
+            raise DatabaseError("Test error", database_type="mysql")
+
+        error = DatabaseError("Test error", database_type="mysql")
+        assert error.database_type == "mysql"
+
+    def test_async_decorator_translates_exception(self):
+        """测试异步装饰器转换异常"""
+        import asyncio
+
+        from mcp_database.core.exceptions import (
+            ConnectionError,
+            IntegrityError,
+            TimeoutError,
+            handle_adapter_errors,
+        )
+
+        @handle_adapter_errors("postgresql")
+        async def async_connect_error():
+            raise ConnectionRefusedError("connection refused")
+
+        @handle_adapter_errors("postgresql")
+        async def async_timeout_error():
+            raise Exception("connection timeout")  # 使用通用异常，会被翻译为 TimeoutError
+
+        @handle_adapter_errors("postgresql")
+        async def async_integrity_error():
+            raise Exception("duplicate key value violates unique constraint")
+
+        # 测试连接错误转换
+        try:
+            asyncio.run(async_connect_error())
+            assert False, "Should have raised ConnectionError"
+        except ConnectionError as e:
+            assert e.database_type == "postgresql"
+
+        # 测试超时错误转换
+        try:
+            asyncio.run(async_timeout_error())
+            assert False, "Should have raised TimeoutError"
+        except TimeoutError as e:
+            assert e.database_type == "postgresql"
+
+        # 测试完整性错误转换
+        try:
+            asyncio.run(async_integrity_error())
+            assert False, "Should have raised IntegrityError"
+        except IntegrityError as e:
+            assert e.database_type == "postgresql"
+
+    def test_sync_decorator_translates_exception(self):
+        """测试同步装饰器转换异常"""
+        from mcp_database.core.exceptions import (
+            ConnectionError,
+            IntegrityError,
+            handle_adapter_errors,
+        )
+
+        @handle_adapter_errors("mysql")
+        def sync_connection_error():
+            raise ConnectionRefusedError("Can't connect")
+
+        @handle_adapter_errors("mysql")
+        def sync_integrity_error():
+            raise Exception("Duplicate entry")
+
+        # 测试连接错误转换
+        try:
+            sync_connection_error()
+            assert False, "Should have raised ConnectionError"
+        except ConnectionError as e:
+            assert e.database_type == "mysql"
+
+        # 测试完整性错误转换
+        try:
+            sync_integrity_error()
+            assert False, "Should have raised IntegrityError"
+        except IntegrityError as e:
+            assert e.database_type == "mysql"
+
+    def test_async_decorator_preserves_return_value(self):
+        """测试异步装饰器正确返回函数结果"""
+        from mcp_database.core.exceptions import handle_adapter_errors
+
+        @handle_adapter_errors("mongodb")
+        async def async_success():
+            return {"success": True}
+
+        result = asyncio.run(async_success())
+        assert result == {"success": True}
+
+    def test_sync_decorator_preserves_return_value(self):
+        """测试同步装饰器正确返回函数结果"""
+        from mcp_database.core.exceptions import handle_adapter_errors
+
+        @handle_adapter_errors("redis")
+        def sync_success():
+            return {"success": True}
+
+        result = sync_success()
+        assert result == {"success": True}
+
+    def test_async_decorator_with_parameters(self):
+        """测试异步装饰器传递参数"""
+        import asyncio
+
+        from mcp_database.core.exceptions import handle_adapter_errors
+
+        @handle_adapter_errors("sqlite")
+        async def async_with_params(x: int, y: int = 10) -> int:
+            return x + y
+
+        result = asyncio.run(async_with_params(5, y=15))
+        assert result == 20
+
+    def test_sync_decorator_with_parameters(self):
+        """测试同步装饰器传递参数"""
+        from mcp_database.core.exceptions import handle_adapter_errors
+
+        @handle_adapter_errors("opensearch")
+        def sync_with_params(x: int, y: int = 10) -> int:
+            return x + y
+
+        result = sync_with_params(5, y=15)
+        assert result == 20
+
+    def test_async_decorator_unknown_database_type(self):
+        """测试异步装饰器处理未知数据库类型"""
+        import asyncio
+
+        from mcp_database.core.exceptions import DatabaseError, handle_adapter_errors
+
+        @handle_adapter_errors("unknown_db")
+        async def async_unknown_error():
+            raise ValueError("Some unknown error")
+
+        try:
+            asyncio.run(async_unknown_error())
+            assert False, "Should have raised DatabaseError"
+        except DatabaseError as e:
+            assert e.database_type == "unknown_db"
+
+    def test_sync_decorator_unknown_database_type(self):
+        """测试同步装饰器处理未知数据库类型"""
+        from mcp_database.core.exceptions import DatabaseError, handle_adapter_errors
+
+        @handle_adapter_errors("unknown_db")
+        def sync_unknown_error():
+            raise ValueError("Some unknown error")
+
+        try:
+            sync_unknown_error()
+            assert False, "Should have raised DatabaseError"
+        except DatabaseError as e:
+            assert e.database_type == "unknown_db"
+
+    def test_decorator_preserves_function_metadata(self):
+        """测试装饰器保留函数元数据"""
+        from mcp_database.core.exceptions import handle_adapter_errors
+
+        @handle_adapter_errors("supabase")
+        def documented_function():
+            """This is a docstring."""
+            pass
+
+        assert documented_function.__name__ == "documented_function"
+        assert documented_function.__doc__ == "This is a docstring."

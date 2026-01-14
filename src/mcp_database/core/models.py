@@ -4,6 +4,16 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
+# 配置常量
+DEFAULT_POOL_SIZE = 5
+DEFAULT_MAX_OVERFLOW = 10
+DEFAULT_CONNECT_TIMEOUT = 10
+DEFAULT_QUERY_TIMEOUT = 30
+DEFAULT_MAX_QUERY_RESULTS = 10000
+MAX_REQUEST_SIZE = 10 * 1024 * 1024  # 10MB
+DEFAULT_LIMIT = 100
+MAX_LIMIT = 10000
+
 
 class InsertResult(BaseModel):
     """插入操作结果"""
@@ -67,17 +77,45 @@ class DatabaseConfig(BaseModel):
     """数据库配置"""
 
     url: str = Field(..., description="数据库连接 URL")
-    pool_size: int = Field(default=5, ge=1, description="连接池大小")
-    max_overflow: int = Field(default=10, ge=0, description="最大溢出连接数")
-    connect_timeout: int = Field(default=10, ge=1, description="连接超时（秒）")
-    query_timeout: int = Field(default=30, ge=1, description="查询超时（秒）")
-    max_query_results: int = Field(default=10000, ge=1, description="查询结果最大数量")
+    pool_size: int = Field(default=DEFAULT_POOL_SIZE, ge=1, description="连接池大小")
+    max_overflow: int = Field(default=DEFAULT_MAX_OVERFLOW, ge=0, description="最大溢出连接数")
+    connect_timeout: int = Field(
+        default=DEFAULT_CONNECT_TIMEOUT, ge=1, description="连接超时（秒）"
+    )
+    query_timeout: int = Field(default=DEFAULT_QUERY_TIMEOUT, ge=1, description="查询超时（秒）")
+    max_query_results: int = Field(
+        default=DEFAULT_MAX_QUERY_RESULTS, ge=1, description="查询结果最大数量"
+    )
     options: dict[str, Any] = Field(default_factory=dict, description="其他配置选项")
 
     @field_validator("url")
     @classmethod
     def validate_url(cls, v: str) -> str:
-        """验证 URL 格式"""
+        """验证 URL 格式并检查安全性"""
         if not v:
             raise ValueError("Database URL cannot be empty")
+
+        # 检查 URL 长度防止资源耗尽
+        if len(v) > 2000:
+            raise ValueError("Database URL exceeds maximum length")
+
+        # 核心安全检查：只阻止明显危险或无效的 scheme
+        try:
+            from urllib.parse import urlparse
+
+            parsed = urlparse(v)
+            if parsed.scheme:
+                scheme_lower = parsed.scheme.lower()
+                # 阻止空 scheme 或常见危险 scheme
+                forbidden_schemes = {"javascript", "data:", "file:", "vbscript"}
+                if scheme_lower in forbidden_schemes:
+                    raise ValueError(f"Invalid database scheme: {parsed.scheme}")
+                # 检查 scheme 格式是否有效（应只包含字母、数字、+）
+                if not all(c.isalnum() or c in "+-" for c in scheme_lower):
+                    raise ValueError(f"Invalid scheme format: {parsed.scheme}")
+        except ValueError:
+            raise
+        except Exception as e:
+            raise ValueError("Invalid database URL format") from e
+
         return v

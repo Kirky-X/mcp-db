@@ -1,9 +1,10 @@
 """Redis 适配器"""
 
 import json
+import re
 from typing import Any
 
-from redis.asyncio import Redis
+import redis.asyncio as redis
 from redis.exceptions import RedisError
 
 from mcp_database.core.adapter import DatabaseAdapter
@@ -23,6 +24,11 @@ from mcp_database.core.models import (
     QueryResult,
     UpdateResult,
 )
+
+# Redis键名验证模式（只允许字母、数字、下划线、冒号）
+# 模式已手动验证为无 ReDoS 风险（无嵌套量词）
+KEY_PATTERN_STR = r"^[a-zA-Z_][a-zA-Z0-9_:]*$"
+VALID_KEY_PATTERN = re.compile(KEY_PATTERN_STR)
 
 
 class RedisAdapter(DatabaseAdapter):
@@ -74,7 +80,7 @@ class RedisAdapter(DatabaseAdapter):
             config: 数据库配置
         """
         super().__init__(config)
-        self._client: Redis | None = None
+        self._client: redis.Redis | None = None
         self._connected: bool = False
         self._filter_translator = RedisFilterTranslator()
 
@@ -93,7 +99,14 @@ class RedisAdapter(DatabaseAdapter):
 
         Returns:
             str: Redis 键
+
+        Raises:
+            QueryError: 表名不合法时抛出
         """
+        # 验证表名只包含安全字符
+        if not VALID_KEY_PATTERN.match(table):
+            raise QueryError(f"Invalid table name: {table}")
+
         return f"{table}:{record_id}"
 
     async def connect(self) -> None:
@@ -105,7 +118,7 @@ class RedisAdapter(DatabaseAdapter):
         """
         try:
             # 创建 Redis 客户端
-            self._client = Redis.from_url(
+            self._client = redis.Redis.from_url(
                 self.config.url,
                 socket_connect_timeout=self.config.connect_timeout,
                 socket_timeout=self.config.query_timeout,
@@ -152,20 +165,26 @@ class RedisAdapter(DatabaseAdapter):
 
             # 批量插入
             if isinstance(data, list):
-                inserted_ids = []
-                for record in data:
-                    # 生成 ID
-                    record_id = await self._client.incr(f"{table}:_id_counter")
-                    inserted_ids.append(record_id)
+                if len(data) == 0:
+                    return InsertResult(inserted_count=0, inserted_ids=[])
 
-                    # 存储数据
+                # 生成所有 ID（pipeline 批量获取）
+                pipe = self._client.pipeline()
+                for _ in data:
+                    pipe.incr(f"{table}:_id_counter")
+                id_results = await pipe.execute()
+                inserted_ids = [int(r) for r in id_results]
+
+                # 批量存储数据和更新索引
+                pipe = self._client.pipeline()
+                index_key = self._is_index_key(table)
+                for record_id, record in zip(inserted_ids, data):
                     key = self._make_key(table, record_id)
                     record_with_id = record.copy()
                     record_with_id["id"] = record_id
-                    await self._client.set(key, self._serialize_data(record_with_id))
-
-                    # 添加到索引
-                    await self._client.sadd(self._is_index_key(table), key)
+                    pipe.set(key, self._serialize_data(record_with_id))
+                    pipe.sadd(index_key, key)
+                await pipe.execute()
 
                 inserted_count = len(data)
             else:
@@ -190,6 +209,52 @@ class RedisAdapter(DatabaseAdapter):
             translated = ExceptionTranslator.translate(e, "redis")
             raise translated
 
+    async def _batch_get_data(self, keys: set[str]) -> dict[str, dict[str, Any]]:
+        """
+        批量获取数据
+
+        Args:
+            keys: 要获取的键集合
+
+        Returns:
+            dict: 键到数据的映射
+        """
+        if not keys:
+            return {}
+
+        # 使用 pipeline 批量获取数据
+        pipe = self._client.pipeline()
+        for key in keys:
+            pipe.get(key)
+        results = await pipe.execute()
+
+        # 构建映射
+        data_map = {}
+        for key, data_str in zip(keys, results):
+            if data_str:
+                try:
+                    data_map[key] = json.loads(data_str)
+                except json.JSONDecodeError:
+                    # 跳过损坏的数据，记录警告
+                    self._logger.warning(f"Skipping corrupted JSON data for key: {key}")
+
+        return data_map
+
+    async def _batch_set_data(self, data_map: dict[str, dict[str, Any]]) -> None:
+        """
+        批量设置数据
+
+        Args:
+            data_map: 键到数据的映射
+        """
+        if not data_map:
+            return
+
+        pipe = self._client.pipeline()
+        for key, data in data_map.items():
+            pipe.set(key, self._serialize_data(data))
+        await pipe.execute()
+
     async def delete(self, table: str, filters: dict[str, Any]) -> DeleteResult:
         """
         删除记录
@@ -212,22 +277,25 @@ class RedisAdapter(DatabaseAdapter):
             index_key = self._is_index_key(table)
             keys = await self._client.smembers(index_key)
 
-            # 过滤并删除
-            deleted_count = 0
-            keys_to_delete = []
+            if not keys:
+                return DeleteResult(deleted_count=0)
 
-            for key in keys:
-                data_str = await self._client.get(key)
-                if data_str:
-                    data = json.loads(data_str)
-                    if filter_func(data):
-                        keys_to_delete.append(key)
+            # 批量获取数据并过滤
+            data_map = await self._batch_get_data(keys)
+
+            # 过滤需要删除的键
+            keys_to_delete = [key for key, data in data_map.items() if filter_func(data)]
 
             # 批量删除
             if keys_to_delete:
-                await self._client.delete(*keys_to_delete)
-                await self._client.srem(index_key, *keys_to_delete)
+                pipe = self._client.pipeline()
+                pipe.delete(*keys_to_delete)
+                for key in keys_to_delete:
+                    pipe.srem(index_key, key)
+                await pipe.execute()
                 deleted_count = len(keys_to_delete)
+            else:
+                deleted_count = 0
 
             return DeleteResult(deleted_count=deleted_count)
 
@@ -260,17 +328,24 @@ class RedisAdapter(DatabaseAdapter):
             index_key = self._is_index_key(table)
             keys = await self._client.smembers(index_key)
 
-            # 过滤并更新
+            if not keys:
+                return UpdateResult(updated_count=0)
+
+            # 批量获取数据
+            data_map = await self._batch_get_data(keys)
+
+            # 批量更新数据
             updated_count = 0
-            for key in keys:
-                data_str = await self._client.get(key)
-                if data_str:
-                    record = json.loads(data_str)
-                    if filter_func(record):
-                        # 更新数据
-                        record.update(data)
-                        await self._client.set(key, self._serialize_data(record))
-                        updated_count += 1
+            data_to_update = {}
+            for key, record in data_map.items():
+                if filter_func(record):
+                    record.update(data)
+                    data_to_update[key] = record
+                    updated_count += 1
+
+            # 批量设置
+            if data_to_update:
+                await self._batch_set_data(data_to_update)
 
             return UpdateResult(updated_count=updated_count)
 
@@ -303,15 +378,17 @@ class RedisAdapter(DatabaseAdapter):
             index_key = self._is_index_key(table)
             keys = await self._client.smembers(index_key)
 
-            # 获取所有数据
-            all_data = []
-            for key in keys:
-                data_str = await self._client.get(key)
-                if data_str:
-                    record = json.loads(data_str)
-                    # 应用过滤器
-                    if filter_func is None or filter_func(record):
-                        all_data.append(record)
+            if not keys:
+                return QueryResult(data=[], count=0, has_more=False)
+
+            # 批量获取数据
+            data_map = await self._batch_get_data(keys)
+
+            # 应用过滤器
+            if filter_func:
+                all_data = [data for data in data_map.values() if filter_func(data)]
+            else:
+                all_data = list(data_map.values())
 
             # 检查结果大小限制
             max_results = self.config.max_query_results

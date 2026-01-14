@@ -1,13 +1,36 @@
 """审计日志系统"""
 
+import asyncio
 import json
 import logging
 import os
+from collections.abc import Callable
 from datetime import datetime
 from functools import wraps
 from typing import Any
 
 from mcp_database.core.models import DatabaseConfig
+
+# 敏感字段白名单 - 这些字段的值会被脱敏
+SENSITIVE_FIELDS = frozenset(
+    {
+        "password",
+        "secret",
+        "api_key",
+        "token",
+        "credential",
+        "auth",
+        "authorization",
+        "private_key",
+        "access_key",
+        "passphrase",
+        "session_id",
+        "refresh_token",
+        "pass_code",
+        "pin",
+        "security_answer",
+    }
+)
 
 
 class AuditLogger:
@@ -38,6 +61,95 @@ class AuditLogger:
             formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
             handler.setFormatter(formatter)
             self._logger.addHandler(handler)
+
+    def _sanitize_value(self, value: Any) -> Any:
+        """
+        递归清理值中的敏感信息
+
+        Args:
+            value: 要清理的值
+
+        Returns:
+            清理后的值
+        """
+        if isinstance(value, str):
+            return "[REDACTED]"
+
+        elif isinstance(value, dict):
+            return {k: self._sanitize_value(v) for k, v in value.items()}
+
+        elif isinstance(value, list):
+            return [self._sanitize_value(item) for item in value]
+
+        elif isinstance(value, set):
+            sanitized = set()
+            for item in value:
+                if isinstance(item, str):
+                    sanitized.add("[REDACTED]")
+                else:
+                    sanitized.add(self._sanitize_value(item))
+            return sanitized
+
+        elif isinstance(value, tuple):
+            return tuple(self._sanitize_value(item) for item in value)
+
+        return value
+
+    def _is_sensitive_key(self, key: str) -> bool:
+        """
+        检查键是否为敏感字段
+
+        Args:
+            key: 字段名
+
+        Returns:
+            是否为敏感字段
+        """
+        key_lower = key.lower()
+        return any(sensitive in key_lower for sensitive in SENSITIVE_FIELDS)
+
+    def _sanitize_params(self, params: dict[str, Any]) -> dict[str, Any]:
+        """
+        移除或脱敏敏感参数
+
+        Args:
+            params: 原始参数字典
+
+        Returns:
+            清理后的参数字典
+        """
+        if not params:
+            return {}
+
+        sanitized = {}
+        for key, value in params.items():
+            if self._is_sensitive_key(key):
+                sanitized[key] = "[REDACTED]"
+            elif isinstance(value, dict):
+                sanitized[key] = self._sanitize_params(value)
+            elif isinstance(value, list):
+                sanitized[key] = self._sanitize_list(value)
+            else:
+                sanitized[key] = value
+        return sanitized
+
+    def _sanitize_list(self, items: list) -> list:
+        """
+        递归清理列表中的敏感信息
+
+        Args:
+            items: 原始列表
+
+        Returns:
+            清理后的列表
+        """
+        sanitized = []
+        for item in items:
+            if isinstance(item, dict):
+                sanitized.append(self._sanitize_params(item))
+            else:
+                sanitized.append(item)
+        return sanitized
 
     def _get_audit_log_path(self) -> str:
         """
@@ -78,7 +190,7 @@ class AuditLogger:
         Args:
             operation: 操作类型（insert, update, delete, query, execute）
             table: 表名
-            params: 操作参数
+            params: 操作参数（已脱敏）
             result: 操作结果
             error: 错误信息
         """
@@ -86,7 +198,7 @@ class AuditLogger:
             "timestamp": datetime.utcnow().isoformat(),
             "operation": operation,
             "table": table,
-            "params": params or {},
+            "params": self._sanitize_params(params) if params else {},
             "result": result or {},
             "error": error,
         }
@@ -107,16 +219,25 @@ class AuditLogger:
         记录 execute 操作日志
 
         Args:
-            query: 查询语句
-            params: 查询参数
+            query: 查询语句类型（不记录原始 SQL）
+            params: 查询参数（已脱敏）
             result: 执行结果
             error: 错误信息
         """
+        # 解析查询类型，不记录原始 SQL 内容
+        query_type = "unknown"
+        if query:
+            query_upper = query.strip().upper()
+            for op in ["SELECT", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER"]:
+                if query_upper.startswith(op):
+                    query_type = op
+                    break
+
         log_entry = {
             "timestamp": datetime.utcnow().isoformat(),
             "operation": "execute",
-            "query": query,
-            "params": params or {},
+            "query_type": query_type,
+            "params": self._sanitize_params(params) if params else {},
             "result": result or {},
             "error": error,
         }
@@ -124,7 +245,82 @@ class AuditLogger:
         if error:
             self._logger.error(json.dumps(log_entry))
         else:
-            self._logger.warning(json.dumps(log_entry))  # execute 操作使用 warning 级别
+            self._logger.info(json.dumps(log_entry))
+
+
+def _create_audit_wrapper(log_method: str, param_key: str, default_param: str) -> Callable:
+    """
+    创建审计装饰器的公共 wrapper 工厂函数
+
+    Args:
+        log_method: 日志方法名 ('log_operation' 或 'log_execute')
+        param_key: kwargs 中的参数键 ('table' 或 'query')
+        default_param: 默认参数值
+
+    Returns:
+        装饰器函数
+    """
+
+    def _log_result(
+        logger: Any, log_method_name: str, param_value: Any, kwargs: dict, error: str | None = None
+    ) -> None:
+        """统一的日志记录辅助函数"""
+        if not logger:
+            return
+        log_func = getattr(logger, log_method_name)
+        if log_method_name == "log_operation":
+            log_func(
+                operation=None,
+                table=param_value,
+                params=kwargs,
+                error=error,
+                result=None if error else {"success": True},
+            )
+        else:
+            log_func(
+                query=param_value,
+                params=kwargs.get("params"),
+                error=error,
+                result=None if error else {"success": True},
+            )
+
+    def decorator(func: Callable) -> Callable:
+        @wraps(func)
+        async def async_wrapper(self, *args, **kwargs):
+            param_value = args[0] if args else kwargs.get(param_key, default_param)
+            logger = getattr(self, "_audit_logger", None)
+
+            try:
+                result = await func(self, *args, **kwargs)
+                if logger:
+                    _log_result(logger, log_method, param_value, kwargs)
+                return result
+            except Exception as e:
+                if logger:
+                    _log_result(logger, log_method, param_value, kwargs, error=str(e))
+                raise
+
+        @wraps(func)
+        def sync_wrapper(self, *args, **kwargs):
+            param_value = args[0] if args else kwargs.get(param_key, default_param)
+            logger = getattr(self, "_audit_logger", None)
+
+            try:
+                result = func(self, *args, **kwargs)
+                if logger:
+                    _log_result(logger, log_method, param_value, kwargs)
+                return result
+            except Exception as e:
+                if logger:
+                    _log_result(logger, log_method, param_value, kwargs, error=str(e))
+                raise
+
+        if asyncio.iscoroutinefunction(func):
+            return async_wrapper
+        else:
+            return sync_wrapper
+
+    return decorator
 
 
 def audit_log(operation: str):
@@ -138,26 +334,20 @@ def audit_log(operation: str):
         装饰器函数
     """
 
-    def decorator(func):
+    def decorator(func: Callable) -> Callable:
         @wraps(func)
         async def async_wrapper(self, *args, **kwargs):
             table = args[0] if args else kwargs.get("table", "unknown")
             logger = getattr(self, "_audit_logger", None)
 
             try:
-                # 执行操作
                 result = await func(self, *args, **kwargs)
-
-                # 记录成功日志
                 if logger:
                     logger.log_operation(
                         operation=operation, table=table, params=kwargs, result={"success": True}
                     )
-
                 return result
-
             except Exception as e:
-                # 记录错误日志
                 if logger:
                     logger.log_operation(
                         operation=operation, table=table, params=kwargs, error=str(e)
@@ -170,27 +360,18 @@ def audit_log(operation: str):
             logger = getattr(self, "_audit_logger", None)
 
             try:
-                # 执行操作
                 result = func(self, *args, **kwargs)
-
-                # 记录成功日志
                 if logger:
                     logger.log_operation(
                         operation=operation, table=table, params=kwargs, result={"success": True}
                     )
-
                 return result
-
             except Exception as e:
-                # 记录错误日志
                 if logger:
                     logger.log_operation(
                         operation=operation, table=table, params=kwargs, error=str(e)
                     )
                 raise
-
-        # 根据函数类型返回对应的包装器
-        import asyncio
 
         if asyncio.iscoroutinefunction(func):
             return async_wrapper
@@ -200,7 +381,7 @@ def audit_log(operation: str):
     return decorator
 
 
-def audit_execute(func):
+def audit_execute(func: Callable) -> Callable:
     """
     execute 操作审计装饰器
 
@@ -217,19 +398,13 @@ def audit_execute(func):
         logger = getattr(self, "_audit_logger", None)
 
         try:
-            # 执行操作
             result = await func(self, *args, **kwargs)
-
-            # 记录成功日志
             if logger:
                 logger.log_execute(
                     query=query, params=kwargs.get("params"), result={"success": True}
                 )
-
             return result
-
         except Exception as e:
-            # 记录错误日志
             if logger:
                 logger.log_execute(query=query, params=kwargs.get("params"), error=str(e))
             raise
@@ -240,25 +415,16 @@ def audit_execute(func):
         logger = getattr(self, "_audit_logger", None)
 
         try:
-            # 执行操作
             result = func(self, *args, **kwargs)
-
-            # 记录成功日志
             if logger:
                 logger.log_execute(
                     query=query, params=kwargs.get("params"), result={"success": True}
                 )
-
             return result
-
         except Exception as e:
-            # 记录错误日志
             if logger:
                 logger.log_execute(query=query, params=kwargs.get("params"), error=str(e))
             raise
-
-    # 根据函数类型返回对应的包装器
-    import asyncio
 
     if asyncio.iscoroutinefunction(func):
         return async_wrapper

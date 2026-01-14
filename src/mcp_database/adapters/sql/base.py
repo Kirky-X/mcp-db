@@ -1,5 +1,6 @@
 """SQL 适配器基类"""
 
+import os
 import re
 from typing import Any
 
@@ -29,6 +30,7 @@ from mcp_database.core.models import (
     UpdateResult,
 )
 from mcp_database.core.permissions import check_execute_permission
+from mcp_database.core.security import SQLSecurityChecker
 
 
 class SQLAdapter(DatabaseAdapter):
@@ -86,6 +88,43 @@ class SQLAdapter(DatabaseAdapter):
         if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", table):
             raise ValueError(f"Invalid table name: {table}")
         return table
+
+    def _validate_column_names(self, columns: list[str]) -> list[str]:
+        """
+        验证列名列表，防止 SQL 注入
+
+        Args:
+            columns: 列名列表
+
+        Returns:
+            验证后的列名列表
+
+        Raises:
+            ValueError: 列名不合法时抛出
+        """
+        validated = []
+        for col in columns:
+            if not re.match(r"^[a-zA-Z_][a-zA-Z0-9_]*$", col):
+                raise ValueError(f"Invalid column name: {col}")
+            validated.append(col)
+        return validated
+
+    def _validate_limit(self, limit: int) -> int:
+        """
+        验证 LIMIT 参数
+
+        Args:
+            limit: LIMIT值
+
+        Returns:
+            验证后的LIMIT值
+
+        Raises:
+            QueryError: LIMIT值不合法时抛出
+        """
+        if not isinstance(limit, int) or limit < 0:
+            raise QueryError(f"Invalid limit value: {limit}. Must be a positive integer.")
+        return limit
 
     async def connect(self) -> None:
         """
@@ -164,8 +203,9 @@ class SQLAdapter(DatabaseAdapter):
         Returns:
             SQL 语句
         """
-        placeholders = ", ".join([f":{col}" for col in columns])
-        columns_str = ", ".join(columns)
+        validated_columns = self._validate_column_names(columns)
+        placeholders = ", ".join([f":{col}" for col in validated_columns])
+        columns_str = ", ".join(validated_columns)
         sql = f"INSERT INTO {table} ({columns_str}) VALUES ({placeholders})"
         if use_returning and self._database_type == "postgresql":
             sql += " RETURNING id"
@@ -214,12 +254,19 @@ class SQLAdapter(DatabaseAdapter):
                 sql = self._build_insert_sql(table, columns, use_returning)
                 stmt = text(sql)
 
-                inserted_ids = []
-                for row in data_list:
-                    result = await session.execute(stmt, row)
+                if len(data_list) > 1:
+                    # 批量执行
+                    results = await session.execute(stmt, data_list)
+                    inserted_ids = []
+                    for result in results:
+                        inserted_id = self._extract_inserted_id(result, use_returning)
+                        if inserted_id:
+                            inserted_ids.append(inserted_id)
+                else:
+                    # 单条执行
+                    result = await session.execute(stmt, data_list[0])
                     inserted_id = self._extract_inserted_id(result, use_returning)
-                    if inserted_id:
-                        inserted_ids.append(inserted_id)
+                    inserted_ids = [inserted_id] if inserted_id else []
 
                 await session.commit()
 
@@ -331,6 +378,9 @@ class SQLAdapter(DatabaseAdapter):
             # 验证表名
             table = self._validate_table_name(table)
 
+            # 获取最大查询限制
+            max_results = self.config.max_query_results
+
             async with self._get_session() as session:
                 # 构建查询语句
                 where_clause = ""
@@ -343,37 +393,41 @@ class SQLAdapter(DatabaseAdapter):
                 if where_clause:
                     sql += f" WHERE {where_clause}"
 
-                # 先查询总数
-                count_sql = f"SELECT COUNT(*) FROM {table}"
-                if where_clause:
-                    count_sql += f" WHERE {where_clause}"
+                # 优化策略：先查询少量数据，根据结果决定是否需要 COUNT
+                # 只有当结果超过请求的 limit 时才执行 COUNT(*)
+                effective_limit = min(limit or max_results, max_results)
+                query_sql = sql
+                if effective_limit is not None:
+                    validated_limit = self._validate_limit(effective_limit)
+                    query_sql = f"{sql} LIMIT {validated_limit + 1}"
 
-                count_result = await session.execute(text(count_sql), params)
-                total_count = count_result.scalar() or 0
+                result = await session.execute(text(query_sql), params)
+                data = [dict(row._mapping) for row in result.fetchall()]
 
-                # 检查结果大小限制
-                max_results = self.config.max_query_results
-                if total_count > max_results:
+                # 判断是否超过最大限制
+                if len(data) > max_results:
                     raise QueryError(
                         f"Query result exceeds maximum limit of {max_results} records. "
                         f"Please add more specific filters to reduce the result size."
                     )
 
-                # 查询数据
-                if limit is not None:
-                    if not isinstance(limit, int) or limit < 0:
-                        raise QueryError(
-                            f"Invalid limit value: {limit}. Must be a positive integer."
-                        )
-                    sql += f" LIMIT {limit}"
-
-                result = await session.execute(text(sql), params)
-                data = [dict(row._mapping) for row in result.fetchall()]
+                # 如果结果少于请求的 limit，说明这就是全部数据，不需要 COUNT
+                actual_count = len(data)
+                if limit is not None and len(data) == limit + 1:
+                    # 结果正好等于 limit+1，需要真正的 COUNT
+                    count_sql = f"SELECT COUNT(*) FROM {table}"
+                    if where_clause:
+                        count_sql += f" WHERE {where_clause}"
+                    count_result = await session.execute(text(count_sql), params)
+                    actual_count = count_result.scalar() or 0
+                    data = data[:limit]
+                elif limit is not None:
+                    data = data[:limit]
 
                 return QueryResult(
                     data=data,
-                    count=total_count,
-                    has_more=limit is not None and len(data) == limit and total_count > limit,
+                    count=actual_count,
+                    has_more=limit is not None and len(data) == limit and actual_count > limit,
                 )
 
         except Exception as e:
@@ -394,8 +448,17 @@ class SQLAdapter(DatabaseAdapter):
 
         Raises:
             QueryError: 查询错误时抛出
+            PermissionError: 权限不足时抛出
         """
         try:
+            # 执行SQL安全检查
+            security_checker = SQLSecurityChecker()
+
+            allow_ddl = os.getenv("MCP_DATABASE_TEST_MODE") == "true"
+            check_result = security_checker.check(query, params, allow_ddl=allow_ddl)
+            if not check_result.is_safe:
+                raise QueryError(f"SQL injection detected: {check_result.reason}")
+
             async with self._get_session() as session:
                 stmt = text(query)
 
@@ -436,42 +499,52 @@ class SQLAdapter(DatabaseAdapter):
             QueryError: 查询错误时抛出
         """
         try:
-            async with self._get_session() as session:
-                if operation == "transaction":
-                    # 执行事务
-                    queries = params.get("queries", [])
-                    results = []
-
-                    for query_info in queries:
-                        query = query_info["query"]
-                        query_params = query_info.get("params")
-                        stmt = text(query)
-
-                        if query_params:
-                            stmt = stmt.bindparams(**query_params)
-
-                        result = await session.execute(stmt)
-                        results.append(
-                            {
-                                "rows_affected": result.rowcount,
-                                "data": [dict(row._mapping) for row in result.fetchall()]
-                                if result.returns_rows
-                                else None,
-                            }
-                        )
-
-                    await session.commit()
-
-                    return AdvancedResult(
-                        operation=operation, data={"results": results, "committed": True}
-                    )
-
-                else:
-                    raise QueryError(f"Unsupported operation: {operation}")
+            if operation == "transaction":
+                return await self._execute_transaction(params)
+            else:
+                raise QueryError(f"Unsupported operation: {operation}")
 
         except Exception as e:
             translated = ExceptionTranslator.translate(e, self._database_type)
             raise translated
+
+    async def _execute_transaction(self, params: dict[str, Any]) -> AdvancedResult:
+        """
+        执行事务查询
+
+        Args:
+            params: 事务参数，包含 queries 列表
+
+        Returns:
+            AdvancedResult: 事务执行结果
+        """
+        async with self._get_session() as session:
+            queries = params.get("queries", [])
+            results = []
+
+            for query_info in queries:
+                query = query_info["query"]
+                query_params = query_info.get("params")
+                stmt = text(query)
+
+                if query_params:
+                    stmt = stmt.bindparams(**query_params)
+
+                result = await session.execute(stmt)
+                results.append(
+                    {
+                        "rows_affected": result.rowcount,
+                        "data": [dict(row._mapping) for row in result.fetchall()]
+                        if result.returns_rows
+                        else None,
+                    }
+                )
+
+            await session.commit()
+
+            return AdvancedResult(
+                operation="transaction", data={"results": results, "committed": True}
+            )
 
     def get_capabilities(self) -> Capability:
         """
