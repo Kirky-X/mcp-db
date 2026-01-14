@@ -169,6 +169,7 @@ class RedisAdapter(DatabaseAdapter):
                     return InsertResult(inserted_count=0, inserted_ids=[])
 
                 # 生成所有 ID（pipeline 批量获取）
+                assert self._client is not None
                 pipe = self._client.pipeline()
                 for _ in data:
                     pipe.incr(f"{table}:_id_counter")
@@ -189,6 +190,7 @@ class RedisAdapter(DatabaseAdapter):
                 inserted_count = len(data)
             else:
                 # 单条插入
+                assert self._client is not None
                 record_id = await self._client.incr(f"{table}:_id_counter")
                 inserted_ids = [record_id]
 
@@ -223,6 +225,7 @@ class RedisAdapter(DatabaseAdapter):
             return {}
 
         # 使用 pipeline 批量获取数据
+        assert self._client is not None
         pipe = self._client.pipeline()
         for key in keys:
             pipe.get(key)
@@ -250,6 +253,7 @@ class RedisAdapter(DatabaseAdapter):
         if not data_map:
             return
 
+        assert self._client is not None
         pipe = self._client.pipeline()
         for key, data in data_map.items():
             pipe.set(key, self._serialize_data(data))
@@ -275,6 +279,7 @@ class RedisAdapter(DatabaseAdapter):
 
             # 从索引中获取所有键（O(1) 复杂度）
             index_key = self._is_index_key(table)
+            assert self._client is not None
             keys = await self._client.smembers(index_key)
 
             if not keys:
@@ -326,6 +331,7 @@ class RedisAdapter(DatabaseAdapter):
 
             # 从索引中获取所有键（O(1) 复杂度）
             index_key = self._is_index_key(table)
+            assert self._client is not None
             keys = await self._client.smembers(index_key)
 
             if not keys:
@@ -376,6 +382,7 @@ class RedisAdapter(DatabaseAdapter):
 
             # 从索引中获取所有键（O(1) 复杂度）
             index_key = self._is_index_key(table)
+            assert self._client is not None
             keys = await self._client.smembers(index_key)
 
             if not keys:

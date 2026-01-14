@@ -1,5 +1,6 @@
 """DatabaseAdapter 抽象基类"""
 
+import logging
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -30,6 +31,7 @@ class DatabaseAdapter(ABC):
             config: 数据库配置
         """
         self._config = config
+        self._logger = logging.getLogger(f"mcp_database.{self.__class__.__name__}")
 
     @property
     def config(self) -> DatabaseConfig:

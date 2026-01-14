@@ -6,8 +6,8 @@ from typing import Any
 
 # OpenSearch异常类和客户端（使用兼容的导入方式）
 try:
-    from opensearch import AsyncOpenSearch
-    from opensearch.exceptions import OpenSearchException
+    from opensearch import AsyncOpenSearch  # type: ignore[import-untyped]
+    from opensearch.exceptions import OpenSearchException  # type: ignore[import-untyped]
 except ImportError:
     # 如果没有安装opensearch-py，使用占位符
     OpenSearchException = Exception
@@ -146,6 +146,7 @@ class OpenSearchAdapter(DatabaseAdapter):
                     return InsertResult(inserted_count=0, inserted_ids=[])
 
                 if len(data) == 1:
+                    assert self._client is not None
                     response = await self._client.index(index=table, body=data[0])
                     doc_id = response.get("_id")
                     return InsertResult(inserted_count=1, inserted_ids=[doc_id], success=True)
@@ -155,6 +156,7 @@ class OpenSearchAdapter(DatabaseAdapter):
                     operations.append({"index": {"_index": table}})
                     operations.append(doc)
 
+                assert self._client is not None
                 response = await self._client.bulk(body=operations)
 
                 # 处理部分成功的情况
@@ -179,6 +181,7 @@ class OpenSearchAdapter(DatabaseAdapter):
                 )
 
             else:
+                assert self._client is not None
                 response = await self._client.index(index=table, body=data)
                 doc_id = response.get("_id")
 
@@ -205,6 +208,7 @@ class OpenSearchAdapter(DatabaseAdapter):
         try:
             # 查询要删除的文档
             query = self._build_query(filters)
+            assert self._client is not None
             search_result = await self._client.search(index=table, body={"query": query})
 
             # 使用 bulk API 批量删除
@@ -246,6 +250,7 @@ class OpenSearchAdapter(DatabaseAdapter):
         try:
             # 查询要更新的文档
             query = self._build_query(filters)
+            assert self._client is not None
             search_result = await self._client.search(index=table, body={"query": query})
 
             # 使用 bulk API 批量更新
@@ -291,10 +296,11 @@ class OpenSearchAdapter(DatabaseAdapter):
             query = self._build_query(filters) if filters else {"match_all": {}}
 
             # 执行查询
-            search_body = {"query": query}
+            search_body: dict[str, Any] = {"query": query}
             if limit:
                 search_body["size"] = limit
 
+            assert self._client is not None
             result = await self._client.search(index=table, body=search_body)
 
             # 提取结果
@@ -405,6 +411,7 @@ class OpenSearchAdapter(DatabaseAdapter):
                 # 验证查询体
                 self._validate_query_body(body)
 
+                assert self._client is not None
                 result = await self._client.search(index=index, body=body)
                 return AdvancedResult(
                     data=result.get("aggregations", {}), operation=operation, success=True
@@ -429,7 +436,6 @@ class OpenSearchAdapter(DatabaseAdapter):
             full_text_search=True,
             aggregation=True,
             transactions=False,
-            advanced_query=True,
         )
 
     def _build_query(self, filters: dict[str, Any]) -> dict[str, Any]:

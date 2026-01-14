@@ -305,7 +305,7 @@ class MongoFilterTranslator:
             "notnull": {"$exists": True} if value else {"$exists": False},
         }
 
-        return operator_map.get(operator, value)
+        return operator_map.get(operator, {"$eq": value})
 
 
 class RedisFilterTranslator:
@@ -367,4 +367,4 @@ class RedisFilterTranslator:
                 return False
             return field_value is not None if value else field_value is None
 
-        return field_value == value
+        return bool(field_value == value)

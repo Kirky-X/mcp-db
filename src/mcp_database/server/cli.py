@@ -25,7 +25,7 @@ async def main() -> None:
 
     server = create_server(args.database_url)
     async with stdio_server() as (read_stream, write_stream):
-        await server.run(read_stream, write_stream)
+        await server.run(read_stream, write_stream)  # type: ignore[func-returns-value]
 
 
 if __name__ == "__main__":

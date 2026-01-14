@@ -106,6 +106,7 @@ class SupabaseAdapter(DatabaseAdapter):
         try:
             # 批量插入 - 使用 Supabase 的批量插入功能
             if isinstance(data, list):
+                assert self._client is not None
                 response = await self._client.post(f"/rest/v1/{table}", json=data)
                 response.raise_for_status()
                 results = response.json()
@@ -117,6 +118,7 @@ class SupabaseAdapter(DatabaseAdapter):
 
             # 单个插入
             else:
+                assert self._client is not None
                 response = await self._client.post(f"/rest/v1/{table}", json=data)
                 response.raise_for_status()
                 result = response.json()
@@ -159,6 +161,7 @@ class SupabaseAdapter(DatabaseAdapter):
                 params[field] = f"eq.{value}"
 
             # 获取要删除的记录
+            assert self._client is not None
             response = await self._client.get(f"/rest/v1/{table}", params=params)
             response.raise_for_status()
             records = response.json()
@@ -208,6 +211,7 @@ class SupabaseAdapter(DatabaseAdapter):
                 params[field] = f"eq.{value}"
 
             # 获取要更新的记录
+            assert self._client is not None
             response = await self._client.get(f"/rest/v1/{table}", params=params)
             response.raise_for_status()
             records = response.json()
@@ -280,9 +284,10 @@ class SupabaseAdapter(DatabaseAdapter):
 
             # 应用限制
             if limit:
-                params["limit"] = limit
+                params["limit"] = str(limit)
 
             # 执行查询
+            assert self._client is not None
             response = await self._client.get(f"/rest/v1/{table}", params=params)
             response.raise_for_status()
             data = response.json() if response.json() else []
@@ -353,5 +358,4 @@ class SupabaseAdapter(DatabaseAdapter):
             full_text_search=True,
             aggregation=False,
             transactions=False,
-            advanced_query=False,
         )
