@@ -7,6 +7,97 @@ from typing import Any
 from mcp_database.core.exceptions import QueryError
 
 
+class RegexSecurityValidator:
+    """正则表达式安全验证器"""
+
+    MAX_REGEX_LENGTH: int = 500
+    MAX_NESTED_QUANTIFIERS: int = 2
+    MAX_CHAR_CLASSES: int = 10
+    MAX_ALTERNATIONS: int = 20
+
+    @classmethod
+    def validate(cls, pattern: str) -> str:
+        """
+        验证正则表达式安全性
+
+        Args:
+            pattern: 要验证的正则表达式模式
+
+        Returns:
+            str: 验证通过的模式
+
+        Raises:
+            QueryError: 正则模式包含恶意构造或超过安全阈值
+        """
+        # 检查长度
+        if len(pattern) > cls.MAX_REGEX_LENGTH:
+            msg = f"Regex pattern exceeds maximum length of {cls.MAX_REGEX_LENGTH}"
+            raise QueryError(msg)
+
+        # 检查嵌套量词 - 任何嵌套量词都是危险的
+        nested = cls._count_nested_quantifiers(pattern)
+        if nested > 0:
+            msg = f"Nested quantifiers detected in regex pattern: {nested}"
+            raise QueryError(msg)
+
+        # 检查字符类数量
+        char_classes = len(re.findall(r"\[[^\]]*\]", pattern))
+        if char_classes > cls.MAX_CHAR_CLASSES:
+            msg = f"Too many character classes: {char_classes}"
+            raise QueryError(msg)
+
+        # 检查交替数量
+        alternations = pattern.count("|")
+        if alternations > cls.MAX_ALTERNATIONS:
+            msg = f"Too many alternations: {alternations}"
+            raise QueryError(msg)
+
+        return pattern
+
+    @classmethod
+    def _count_nested_quantifiers(cls, pattern: str) -> int:
+        """
+        计算嵌套量词数量
+
+        检测可能导致 ReDoS 的嵌套量词构造，如:
+        - a** (量词后跟另一个量词)
+        - a++ (相邻量词)
+        - (a*)* (组内和组外都有量词)
+        - {n}{m} (多个数量词相邻)
+        """
+        # 移除转义字符以简化检测
+        unescaped = pattern.replace("\\", "")
+
+        # 检测嵌套量词
+        # 模式说明:
+        # [*+]\s*[*+]  - 相邻量词如 **, *+, ++
+        # \{\d+\}\s*\{\d+\}  - 相邻的数量词如 {2}{3}
+        # [*+]\s*\{         - 量词后直接跟数量词如 *{
+        nested_pattern = re.compile(
+            r"[*+]\s*[*+]|"
+            r"\{\d+\}\s*\{|"
+            r"[*+]\s*\{"
+        )
+        matches = nested_pattern.findall(unescaped)
+        count = len(matches)
+
+        # 检测组内外的量词嵌套，如 (a+)*
+        # 查找包含量词的组：\(...[*+?{]...\) 或 \(...{n,m}...\)
+        group_with_quantifier = re.compile(
+            r"\([^)]*[*+?\{][^)]*\)[*+?]|\([^)]*\{\d+(?:,\d*)?\}[^)]*\)[*+?{]"
+        )
+        group_matches = group_with_quantifier.findall(unescaped)
+        count += len(group_matches)
+
+        return count
+
+
+# 正则表达式安全阈值配置 (保留用于向后兼容)
+MAX_REGEX_LENGTH: int = RegexSecurityValidator.MAX_REGEX_LENGTH
+MAX_NESTED_QUANTIFIERS: int = RegexSecurityValidator.MAX_NESTED_QUANTIFIERS
+MAX_CHAR_CLASSES: int = RegexSecurityValidator.MAX_CHAR_CLASSES
+
+
 class FilterParser:
     """过滤器解析器基类"""
 
@@ -103,50 +194,57 @@ class SQLFilterTranslator:
         if not values:
             return "1=0", {}
 
-        placeholders = []
-        params = {}
-        for i, value in enumerate(values):
-            param_name = f"{field}_in_{i}"
-            placeholders.append(f":{param_name}")
-            params[param_name] = value
-
-        return f"{field} IN ({', '.join(placeholders)})", params
+        return self._translate_list_condition(field, values, "IN")
 
     def _translate_not_in(self, field: str, values: list[Any]) -> tuple[str, dict[str, Any]]:
         """转换 NOT IN 操作符"""
         if not values:
             return "1=1", {}
 
+        return self._translate_list_condition(field, values, "NOT IN")
+
+    def _translate_list_condition(
+        self, field: str, values: list[Any], operator: str
+    ) -> tuple[str, dict[str, Any]]:
+        """
+        通用列表条件转换方法
+
+        Args:
+            field: 字段名
+            values: 值列表
+            operator: SQL 操作符 (IN 或 NOT IN)
+
+        Returns:
+            (SQL 条件, 参数字典)
+        """
+        prefix = "in" if operator == "IN" else "notin"
         placeholders = []
         params = {}
         for i, value in enumerate(values):
-            param_name = f"{field}_notin_{i}"
+            param_name = f"{field}_{prefix}_{i}"
             placeholders.append(f":{param_name}")
             params[param_name] = value
 
-        return f"{field} NOT IN ({', '.join(placeholders)})", params
+        return f"{field} {operator} ({', '.join(placeholders)})", params
 
     def _translate_isnull(self, field: str, value: Any) -> tuple[str, dict[str, Any]]:
         """转换 IS NULL 操作符"""
         if not isinstance(value, bool):
             raise QueryError(f"Filter '{field}__isnull' must be true or false")
-        if value:
-            return f"{field} IS NULL", {}
-        else:
-            return f"{field} IS NOT NULL", {}
+        return f"{field} IS {'NULL' if value else 'NOT NULL'}", {}
 
     def _translate_notnull(self, field: str, value: Any) -> tuple[str, dict[str, Any]]:
         """转换 NOT NULL 操作符（与 isnull 反向）"""
         if not isinstance(value, bool):
             raise QueryError(f"Filter '{field}__notnull' must be true or false")
-        if value:
-            return f"{field} IS NOT NULL", {}
-        else:
-            return f"{field} IS NULL", {}
+        return f"{field} IS {'NOT NULL' if value else 'NULL'}", {}
 
 
 class MongoFilterTranslator:
     """MongoDB 过滤器转换器"""
+
+    def __init__(self) -> None:
+        self._regex_validator = RegexSecurityValidator()
 
     def translate(self, filters: dict[str, Any]) -> dict[str, Any]:
         """
@@ -169,16 +267,42 @@ class MongoFilterTranslator:
 
         return mongo_filters
 
+    def _translate_contains(self, value: Any) -> dict[str, Any]:
+        """
+        转换 contains 操作符
+
+        Args:
+            value: 包含的值
+
+        Returns:
+            MongoDB $regex 查询条件
+
+        Raises:
+            QueryError: 正则模式包含恶意构造或超过安全阈值
+        """
+        str_value = str(value)
+        # 使用正则验证器进行安全检查
+        self._regex_validator.validate(str_value)
+        # 对值进行转义以防止注入
+        return {"$regex": re.escape(str_value), "$options": "i"}
+
     def _translate_operator(self, operator: str, value: Any) -> dict[str, Any]:
         """转换操作符"""
+        # 对正则操作符进行安全验证
+        if operator in ("contains", "startswith", "endswith"):
+            str_value = str(value)
+            if operator == "contains":
+                return self._translate_contains(str_value)
+            elif operator == "startswith":
+                return {"$regex": f"^{re.escape(str_value)}", "$options": "i"}
+            elif operator == "endswith":
+                return {"$regex": f"{re.escape(str_value)}$", "$options": "i"}
+
         operator_map = {
             "gt": {"$gt": value},
             "lt": {"$lt": value},
             "gte": {"$gte": value},
             "lte": {"$lte": value},
-            "contains": {"$regex": str(value), "$options": "i"},
-            "startswith": {"$regex": f"^{re.escape(str(value))}", "$options": "i"},
-            "endswith": {"$regex": f"{re.escape(str(value))}$", "$options": "i"},
             "in": {"$in": value},
             "not_in": {"$nin": value},
             "isnull": {"$exists": False} if value else {"$exists": True},

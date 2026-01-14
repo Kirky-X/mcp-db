@@ -49,8 +49,6 @@ class SQLSecurityChecker:
 
     def __init__(self) -> None:
         """初始化安全检查器"""
-        # 使用类属性，避免重复编译正则表达式
-        pass
 
     def check(
         self, query: str, params: dict[str, Any] | None = None, allow_ddl: bool | None = None

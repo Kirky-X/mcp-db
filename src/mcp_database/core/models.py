@@ -15,51 +15,51 @@ DEFAULT_LIMIT = 100
 MAX_LIMIT = 10000
 
 
-class InsertResult(BaseModel):
+class OperationResult(BaseModel):
+    """操作结果基类"""
+
+    success: bool = Field(default=True, description="操作是否成功")
+
+
+class InsertResult(OperationResult):
     """插入操作结果"""
 
     inserted_count: int = Field(..., ge=0, description="插入的记录数")
     inserted_ids: list[Any] = Field(default_factory=list, description="插入的 ID 列表")
-    success: bool = Field(default=True, description="操作是否成功")
 
 
-class UpdateResult(BaseModel):
+class UpdateResult(OperationResult):
     """更新操作结果"""
 
     updated_count: int = Field(..., ge=0, description="更新的记录数")
-    success: bool = Field(default=True, description="操作是否成功")
 
 
-class DeleteResult(BaseModel):
+class DeleteResult(OperationResult):
     """删除操作结果"""
 
     deleted_count: int = Field(..., ge=0, description="删除的记录数")
-    success: bool = Field(default=True, description="操作是否成功")
 
 
-class QueryResult(BaseModel):
+class QueryResult(OperationResult):
     """查询操作结果"""
 
     data: list[dict[str, Any]] = Field(default_factory=list, description="查询结果数据")
     count: int = Field(..., ge=0, description="匹配的记录总数")
     has_more: bool = Field(default=False, description="是否还有更多数据")
-    success: bool = Field(default=True, description="操作是否成功")
 
 
-class ExecuteResult(BaseModel):
+class ExecuteResult(OperationResult):
     """执行命令结果"""
 
     rows_affected: int = Field(..., ge=0, description="影响的行数")
     data: list[dict[str, Any]] | None = Field(default=None, description="返回的数据")
-    success: bool = Field(default=True, description="操作是否成功")
 
 
-class AdvancedResult(BaseModel):
+class AdvancedResult(OperationResult):
     """高级查询结果"""
 
     operation: str = Field(..., description="操作类型")
     data: Any = Field(..., description="操作结果数据")
-    success: bool = Field(default=True, description="操作是否成功")
 
 
 class Capability(BaseModel):

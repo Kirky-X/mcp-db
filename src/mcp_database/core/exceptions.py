@@ -12,9 +12,6 @@ CREDENTIAL_PATTERNS = [
     re.compile(r"(postgresql|mongodb|redis)://\S+:\S+@"),
 ]
 
-# 预编译的脱敏模式（类属性，避免重复编译）
-_SANITIZE_PATTERNS = CREDENTIAL_PATTERNS
-
 
 def _sanitize_error_message(message: str) -> str:
     sanitized = message
@@ -104,6 +101,18 @@ class ExceptionTranslator:
         "timeout": TimeoutError,
     }
 
+    # OpenSearch 错误映射
+    OPENSEARCH_ERROR_MAP = {
+        "connection": ConnectionError,
+        "timeout": TimeoutError,
+    }
+
+    # Supabase 错误映射
+    SUPABASE_ERROR_MAP = {
+        "connection": ConnectionError,
+        "timeout": TimeoutError,
+    }
+
     @classmethod
     def translate(cls, original_error: Exception, database_type: str) -> DatabaseError:
         """
@@ -138,18 +147,17 @@ class ExceptionTranslator:
     @classmethod
     def _get_error_map(cls, database_type: str) -> dict:
         """获取错误映射表"""
-        if database_type in ["postgresql", "postgres"]:
-            return cls.POSTGRESQL_ERROR_MAP
-        elif database_type == "mysql":
-            return cls.MYSQL_ERROR_MAP
-        elif database_type == "sqlite":
-            return cls.SQLITE_ERROR_MAP
-        elif database_type == "mongodb":
-            return cls.MONGODB_ERROR_MAP
-        elif database_type == "redis":
-            return cls.REDIS_ERROR_MAP
-        else:
-            return {}
+        error_maps = {
+            "postgresql": cls.POSTGRESQL_ERROR_MAP,
+            "postgres": cls.POSTGRESQL_ERROR_MAP,
+            "mysql": cls.MYSQL_ERROR_MAP,
+            "sqlite": cls.SQLITE_ERROR_MAP,
+            "mongodb": cls.MONGODB_ERROR_MAP,
+            "redis": cls.REDIS_ERROR_MAP,
+            "opensearch": cls.OPENSEARCH_ERROR_MAP,
+            "supabase": cls.SUPABASE_ERROR_MAP,
+        }
+        return error_maps.get(database_type, {})
 
 
 def handle_adapter_errors(database_type: str = "unknown"):
