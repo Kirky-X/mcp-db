@@ -68,7 +68,7 @@ class DatabaseTestUtils:
         "TEST_MONGODB_URL", "mongodb://testuser:testpass@localhost:27018/testdb?authSource=admin"
     )
     REDIS_URL = os.getenv("TEST_REDIS_URL", "redis://:testpass@localhost:16379/0")
-    OPENSEARCH_URL = os.getenv("TEST_OPENSEARCH_URL", "http://localhost:19200")
+    OPENSEARCH_URL = os.getenv("TEST_OPENSEARCH_URL", "http://localhost:9200")
 
     @staticmethod
     async def create_test_table(adapter, table_name: str, schema: dict[str, str]) -> None:
