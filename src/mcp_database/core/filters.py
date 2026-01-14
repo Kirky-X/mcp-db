@@ -73,11 +73,7 @@ class RegexSecurityValidator:
         # [*+]\s*[*+]  - 相邻量词如 **, *+, ++
         # \{\d+\}\s*\{\d+\}  - 相邻的数量词如 {2}{3}
         # [*+]\s*\{         - 量词后直接跟数量词如 *{
-        nested_pattern = re.compile(
-            r"[*+]\s*[*+]|"
-            r"\{\d+\}\s*\{|"
-            r"[*+]\s*\{"
-        )
+        nested_pattern = re.compile(r"[*+]\s*[*+]|" r"\{\d+\}\s*\{|" r"[*+]\s*\{")
         matches = nested_pattern.findall(unescaped)
         count = len(matches)
 

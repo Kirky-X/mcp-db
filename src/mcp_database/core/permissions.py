@@ -1,5 +1,6 @@
 """权限控制"""
 
+import asyncio
 from collections.abc import Callable
 from functools import wraps
 from typing import Any
@@ -85,8 +86,6 @@ def require_permission(operation: str, dangerous: bool = False):
         def sync_wrapper(*args, **kwargs) -> Any:
             PermissionManager.get_instance().check_permission(operation, dangerous)
             return func(*args, **kwargs)
-
-        import asyncio
 
         if asyncio.iscoroutinefunction(func):
             return async_wrapper
